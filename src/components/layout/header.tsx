@@ -1,29 +1,35 @@
-"use client";
+'use client';
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useAuth } from "@/hooks/use-auth";
-import { LogOut, Menu, Settings as SettingsIcon, User } from "lucide-react";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import { useAuth } from '@/hooks/use-auth';
+import {
+  Building2,
+  LogOut,
+  Menu,
+  Settings as SettingsIcon,
+  User,
+} from 'lucide-react';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { ModeToggle } from "@/components/layout/mode-toggle";
+} from '@/components/ui/dropdown-menu';
+import { ModeToggle } from '@/components/layout/mode-toggle';
 
 const pageTitles: Record<string, string> = {
-  "/dashboard": "dashboard",
-  "/inbox": "inbox",
-  "/notifications": "notifications",
-  "/contacts": "contacts",
-  "/pipelines": "pipelines",
-  "/broadcasts": "broadcasts",
-  "/automations": "automations",
-  "/settings": "settings",
-  "/platform": "platform",
+  '/dashboard': 'dashboard',
+  '/inbox': 'inbox',
+  '/notifications': 'notifications',
+  '/contacts': 'contacts',
+  '/pipelines': 'pipelines',
+  '/broadcasts': 'broadcasts',
+  '/automations': 'automations',
+  '/settings': 'settings',
+  '/platform': 'platform',
 };
 
 function getPageTitleKey(pathname: string): string {
@@ -31,7 +37,7 @@ function getPageTitleKey(pathname: string): string {
   const match = Object.entries(pageTitles).find(([path]) =>
     pathname.startsWith(path)
   );
-  return match ? match[1] : "dashboard";
+  return match ? match[1] : 'dashboard';
 }
 
 interface HeaderProps {
@@ -40,18 +46,26 @@ interface HeaderProps {
   onOpenSidebar?: () => void;
 }
 
-import { useTranslations } from "next-intl";
+import { useTranslations } from 'next-intl';
 
 export function Header({ onOpenSidebar }: HeaderProps) {
-  const t = useTranslations("Header");
+  const t = useTranslations('Header');
   const pathname = usePathname();
-  const { profile, canEditSettings, signOut } = useAuth();
+  const { profile, account, canEditSettings, isPlatformWorkspace, signOut } =
+    useAuth();
   const titleKey = getPageTitleKey(pathname);
 
   const initial =
     profile?.full_name?.charAt(0)?.toUpperCase() ??
     profile?.email?.charAt(0)?.toUpperCase() ??
-    "U";
+    'U';
+
+  async function exitClientWorkspace() {
+    const response = await fetch('/api/platform/workspace-context', {
+      method: 'DELETE',
+    });
+    if (response.ok) window.location.assign('/platform');
+  }
 
   return (
     <header className="border-border bg-background flex h-14 shrink-0 items-center justify-between gap-3 border-b px-4 lg:px-6">
@@ -60,7 +74,7 @@ export function Header({ onOpenSidebar }: HeaderProps) {
         <button
           type="button"
           onClick={onOpenSidebar}
-          aria-label={t("openMenu")}
+          aria-label={t('openMenu')}
           className="text-muted-foreground hover:bg-muted hover:text-foreground flex h-10 w-10 items-center justify-center rounded-md transition-colors lg:hidden"
         >
           <Menu className="h-5 w-5" />
@@ -71,18 +85,31 @@ export function Header({ onOpenSidebar }: HeaderProps) {
       </div>
 
       <div className="flex items-center gap-1 sm:gap-2">
+        {isPlatformWorkspace && account ? (
+          <div className="hidden items-center gap-2 rounded-md border border-violet-500/30 bg-violet-500/10 px-2.5 py-1.5 text-xs text-violet-200 md:flex">
+            <Building2 className="size-3.5" />
+            <span className="max-w-48 truncate">{account.name}</span>
+            <button
+              type="button"
+              onClick={exitClientWorkspace}
+              className="font-medium text-violet-100 underline-offset-2 hover:underline"
+            >
+              Exit
+            </button>
+          </div>
+        ) : null}
         <ModeToggle />
 
         <DropdownMenu>
           <DropdownMenuTrigger
             className="hover:bg-muted/70 focus:bg-muted/70 data-popup-open:bg-muted/70 flex items-center gap-2 rounded-md px-1 py-1 transition-colors focus:outline-none sm:gap-3 sm:pr-3 sm:pl-1"
-            aria-label={t("openAccountMenu")}
+            aria-label={t('openAccountMenu')}
           >
             <Avatar className="size-8">
               {profile?.avatar_url ? (
                 <AvatarImage
                   src={profile.avatar_url}
-                  alt={profile.full_name ?? t("defaultAvatar")}
+                  alt={profile.full_name ?? t('defaultAvatar')}
                 />
               ) : null}
               <AvatarFallback className="bg-primary/10 text-primary text-sm font-medium">
@@ -90,7 +117,7 @@ export function Header({ onOpenSidebar }: HeaderProps) {
               </AvatarFallback>
             </Avatar>
             <span className="text-foreground hidden text-sm font-medium sm:inline">
-              {profile?.full_name ?? t("defaultUser")}
+              {profile?.full_name ?? t('defaultUser')}
             </span>
           </DropdownMenuTrigger>
           <DropdownMenuContent
@@ -100,10 +127,10 @@ export function Header({ onOpenSidebar }: HeaderProps) {
           >
             <div className="px-2 py-1.5">
               <p className="text-foreground truncate text-sm font-medium">
-                {profile?.full_name ?? t("defaultUser")}
+                {profile?.full_name ?? t('defaultUser')}
               </p>
               <p className="text-muted-foreground truncate text-xs">
-                {profile?.email ?? ""}
+                {profile?.email ?? ''}
               </p>
             </div>
             <DropdownMenuSeparator className="bg-border" />
@@ -116,22 +143,22 @@ export function Header({ onOpenSidebar }: HeaderProps) {
               }
             >
               <User className="size-4" />
-              {t("menuProfile")}
+              {t('menuProfile')}
             </DropdownMenuItem>
             <DropdownMenuItem
               render={
                 <Link
                   href={
                     canEditSettings
-                      ? "/settings?tab=whatsapp"
-                      : "/settings?tab=profile"
+                      ? '/settings?tab=whatsapp'
+                      : '/settings?tab=profile'
                   }
                   className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
                 />
               }
             >
               <SettingsIcon className="size-4" />
-              {t("menuSettings")}
+              {t('menuSettings')}
             </DropdownMenuItem>
             <DropdownMenuSeparator className="bg-border" />
             <DropdownMenuItem
@@ -139,7 +166,7 @@ export function Header({ onOpenSidebar }: HeaderProps) {
               className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
             >
               <LogOut className="size-4" />
-              {t("menuSignOut")}
+              {t('menuSignOut')}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

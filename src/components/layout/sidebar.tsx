@@ -20,6 +20,7 @@ import {
   Radio,
   Settings,
   Shield,
+  ShieldCheck,
   User,
   UserCog,
   Users,
@@ -320,7 +321,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                     'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors lg:py-2',
                     pathname.startsWith('/platform')
                       ? 'bg-primary/10 text-primary'
-                      : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                      : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                   )}
                 >
                   <Building2 className="h-4 w-4" />
@@ -373,7 +374,14 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                   // from admins at a glance. Now everyone sees their
                   // role (with a colour cue) regardless of tier.
                   (() => {
-                    const meta = ROLE_CHIP[accountRole];
+                    const meta = isSuperAdmin
+                      ? {
+                          icon: ShieldCheck,
+                          labelKey: 'roleSuperAdmin',
+                          className:
+                            'border-violet-500/40 bg-violet-500/10 text-violet-300',
+                        }
+                      : ROLE_CHIP[accountRole];
                     const Icon = meta.icon;
                     return (
                       <span

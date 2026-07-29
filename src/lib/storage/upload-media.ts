@@ -1,4 +1,5 @@
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from '@/lib/supabase/client';
+import { resolveActiveAccountId } from '@/lib/auth/active-account';
 
 /**
  * Shared media-upload helper for Supabase Storage buckets that use the
@@ -46,18 +47,18 @@ export const MEDIA_MAX_BYTES_BY_KIND = {
 export function buildMediaPath(
   accountId: string,
   fileName: string,
-  now: number = Date.now(),
+  now: number = Date.now()
 ): string {
   // Only treat the trailing segment as an extension when there's a real
   // one — a bare name like "README" has no extension and falls back to
   // "bin" rather than becoming "readme".
   const hasExt = /\.[^.]+$/.test(fileName);
-  const ext = hasExt ? fileName.split(".").pop()!.toLowerCase() : "bin";
+  const ext = hasExt ? fileName.split('.').pop()!.toLowerCase() : 'bin';
   const safeBase =
     fileName
-      .replace(/\.[^.]+$/, "")
-      .replace(/[^a-zA-Z0-9_-]+/g, "_")
-      .slice(0, 40) || "file";
+      .replace(/\.[^.]+$/, '')
+      .replace(/[^a-zA-Z0-9_-]+/g, '_')
+      .slice(0, 40) || 'file';
   return `account-${accountId}/${now}-${safeBase}.${ext}`;
 }
 
@@ -78,7 +79,7 @@ export interface UploadAccountMediaResult {
  */
 export async function uploadAccountMedia(
   bucket: string,
-  file: File,
+  file: File
 ): Promise<UploadAccountMediaResult> {
   const supabase = createClient();
 
@@ -87,27 +88,25 @@ export async function uploadAccountMedia(
     error: userErr,
   } = await supabase.auth.getUser();
   if (userErr || !user) {
-    throw new Error("Not signed in.");
+    throw new Error('Not signed in.');
   }
 
   // Resolve account_id so the path is account-scoped (matches the
   // bucket's RLS write policy from migration 020/023). User-scoped
   // paths would be rejected.
-  const { data: profile, error: profileErr } = await supabase
-    .from("profiles")
-    .select("account_id")
-    .eq("user_id", user.id)
-    .maybeSingle();
-  if (profileErr || !profile?.account_id) {
-    throw new Error("Could not resolve your account.");
+  const accountId = await resolveActiveAccountId(supabase);
+  if (!accountId) {
+    throw new Error('Could not resolve your account.');
   }
 
-  const path = buildMediaPath(profile.account_id as string, file.name);
-  const { error: upErr } = await supabase.storage.from(bucket).upload(path, file, {
-    cacheControl: "3600",
-    upsert: false,
-    contentType: file.type,
-  });
+  const path = buildMediaPath(accountId, file.name);
+  const { error: upErr } = await supabase.storage
+    .from(bucket)
+    .upload(path, file, {
+      cacheControl: '3600',
+      upsert: false,
+      contentType: file.type,
+    });
   if (upErr) throw new Error(upErr.message);
 
   const {
@@ -129,7 +128,7 @@ export async function uploadAccountMedia(
  */
 export async function deleteAccountMedia(
   bucket: string,
-  path: string,
+  path: string
 ): Promise<void> {
   const supabase = createClient();
   const { error } = await supabase.storage.from(bucket).remove([path]);

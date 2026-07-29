@@ -1,6 +1,7 @@
 import {
   Crown,
   Shield,
+  ShieldCheck,
   UserCog,
   UserIcon,
   type LucideIcon,
@@ -49,3 +50,19 @@ export const ROLE_META: Record<
     className: 'border-border bg-transparent text-muted-foreground',
   },
 };
+
+/**
+ * Platform authority is independent from a workspace role. A platform
+ * administrator can still be the `owner` of a workspace, but identity
+ * surfaces should show the stronger platform role so operators are not
+ * mistaken for an ordinary Client Admin.
+ *
+ * Keep this outside `ROLE_META`: it must never be accepted anywhere that
+ * expects an assignable `AccountRole`.
+ */
+export const SUPER_ADMIN_META = {
+  icon: ShieldCheck,
+  label: 'superAdmin',
+  variant: 'admin',
+  className: 'border-violet-500/40 bg-violet-500/10 text-violet-300',
+} as const;

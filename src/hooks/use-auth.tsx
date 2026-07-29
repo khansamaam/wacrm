@@ -112,7 +112,9 @@ interface AuthContextValue {
   canEditSettings: boolean;
   /** Platform-level authority, independent of the workspace role. */
   isSuperAdmin: boolean;
-  /** Only the platform Super Admin may change WhatsApp credentials. */
+  /** True while a Super Admin is operating inside a selected client workspace. */
+  isPlatformWorkspace: boolean;
+  /** Client Admins and an entered Platform Super Admin may manage WhatsApp. */
   canManageWhatsApp: boolean;
   /** True if the caller can send messages and edit operational data (agent+). */
   canSendMessages: boolean;
@@ -134,6 +136,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [account, setAccount] = useState<AccountSummary | null>(null);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [isPlatformWorkspace, setIsPlatformWorkspace] = useState(false);
   const [loading, setLoading] = useState(true);
   // Tracked separately from `loading`. The session settles fast (one
   // local cookie read); the profile fetch crosses the network and
@@ -171,15 +174,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
         lastFetchedUserIdRef.current = null;
         setIsSuperAdmin(false);
+        setIsPlatformWorkspace(false);
         return;
       }
 
       if (data) {
-        const { data: platformAdmin, error: platformAdminError } = await supabase
-          .from('platform_admins')
-          .select('user_id')
-          .eq('user_id', userId)
-          .maybeSingle();
+        const { data: platformAdmin, error: platformAdminError } =
+          await supabase
+            .from('platform_admins')
+            .select('user_id')
+            .eq('user_id', userId)
+            .maybeSingle();
         if (platformAdminError) {
           // Migration 041 may not be installed yet during a rolling deploy.
           // Fail closed without blanking the ordinary workspace profile.
@@ -188,7 +193,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             platformAdminError.message
           );
         }
-        setIsSuperAdmin(Boolean(platformAdmin));
+        const hasPlatformAccess = Boolean(platformAdmin);
+        setIsSuperAdmin(hasPlatformAccess);
+
+        let effectiveAccountId = data.account_id as string | null;
+        let effectiveAccountRole = isAccountRole(data.account_role)
+          ? data.account_role
+          : null;
+        let enteredPlatformWorkspace = false;
+
+        if (hasPlatformAccess) {
+          const { data: context, error: contextError } = await supabase
+            .from('platform_workspace_context')
+            .select('account_id')
+            .eq('platform_admin_user_id', userId)
+            .maybeSingle();
+
+          if (contextError) {
+            // During a rolling deployment, retain the Super Admin's original
+            // workspace until migration 042 is available.
+            console.warn(
+              '[AuthProvider] platform workspace context unavailable; using profile workspace:',
+              contextError.message
+            );
+          } else {
+            effectiveAccountId = context?.account_id ?? null;
+            effectiveAccountRole = context?.account_id ? 'owner' : null;
+            enteredPlatformWorkspace = Boolean(context?.account_id);
+          }
+        }
+        setIsPlatformWorkspace(enteredPlatformWorkspace);
 
         // Load the account with a plain lookup by id instead of an
         // embedded FK join. The embed (`account:accounts!inner(...)`)
@@ -201,13 +235,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // (with account_id / account_role) still resolves even if the
         // account name lookup itself can't.
         let accountRow: AccountSummary | null = null;
-        if (data.account_id) {
+        if (effectiveAccountId) {
           const { data: account, error: accountErr } = await supabase
             .from('accounts')
             // default_currency added in migration 021; narrowed to the
             // USD fallback below for older schemas where it reads null.
             .select('id, name, default_currency')
-            .eq('id', data.account_id)
+            .eq('id', effectiveAccountId)
             .maybeSingle();
           if (accountErr) {
             console.error('[AuthProvider] fetchAccount error:', {
@@ -225,7 +259,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             const { data: accessRow, error: accessErr } = await supabase
               .from('accounts')
               .select('module_access')
-              .eq('id', data.account_id)
+              .eq('id', effectiveAccountId)
               .maybeSingle();
             if (accessErr) {
               // This is expected before migration 039. It is non-fatal and
@@ -245,15 +279,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
         }
 
-        // Narrow the DB enum into our AccountRole union. The DB
-        // constraint should make this unconditional, but a future
-        // migration that broadens the enum without updating TS would
-        // otherwise crash here — fall back to null and let UI gates
-        // treat the caller as least-privileged.
-        const accountRole = isAccountRole(data.account_role)
-          ? data.account_role
-          : null;
-
         setProfile({
           id: data.id,
           full_name: data.full_name,
@@ -265,8 +290,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // (older deployments running 011 lazily) — `null` reads as no
           // opt-ins, which is the safe default for any future beta gate.
           beta_features: data.beta_features ?? [],
-          account_id: data.account_id ?? null,
-          account_role: accountRole,
+          account_id: effectiveAccountId,
+          account_role: effectiveAccountRole,
           access_status:
             data.access_status === 'pending' || data.access_status === 'removed'
               ? data.access_status
@@ -276,10 +301,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } else {
         lastFetchedUserIdRef.current = null;
         setIsSuperAdmin(false);
+        setIsPlatformWorkspace(false);
       }
     } catch (err) {
       console.error('[AuthProvider] fetchProfile threw:', err);
       lastFetchedUserIdRef.current = null;
+      setIsPlatformWorkspace(false);
     } finally {
       setProfileLoading(false);
     }
@@ -349,6 +376,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setProfile(null);
         setAccount(null);
         setIsSuperAdmin(false);
+        setIsPlatformWorkspace(false);
         setProfileLoading(false);
       }
 
@@ -368,6 +396,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setProfile(null);
     setAccount(null);
+    setIsSuperAdmin(false);
+    setIsPlatformWorkspace(false);
     window.location.href = '/login';
   }, []);
 
@@ -392,7 +422,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       canManageMembers: role ? canManageMembersFor(role) : false,
       canEditSettings: role ? canEditSettingsFor(role) : false,
       isSuperAdmin,
-      canManageWhatsApp: isSuperAdmin,
+      isPlatformWorkspace,
+      canManageWhatsApp: role === 'owner',
       canSendMessages: role ? canSendMessagesFor(role) : false,
       moduleAccess: account?.moduleAccess ?? DEFAULT_MODULE_ACCESS,
       canAccessModule: (module: AppModule) =>
@@ -405,6 +436,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     profile?.account_id,
     account?.moduleAccess,
     isSuperAdmin,
+    isPlatformWorkspace,
   ]);
 
   return (
@@ -457,6 +489,7 @@ export function useAuth(): AuthContextValue {
       canManageMembers: false,
       canEditSettings: false,
       isSuperAdmin: false,
+      isPlatformWorkspace: false,
       canManageWhatsApp: false,
       canSendMessages: false,
       moduleAccess: DEFAULT_MODULE_ACCESS,

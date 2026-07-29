@@ -21,6 +21,8 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
     accountRole,
     moduleAccess,
     canAccessModule,
+    isSuperAdmin,
+    isPlatformWorkspace,
   } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
@@ -42,6 +44,17 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
       router.push('/login');
     }
   }, [user, loading, router]);
+
+  useEffect(() => {
+    if (
+      !profileLoading &&
+      isSuperAdmin &&
+      !isPlatformWorkspace &&
+      pathname === '/dashboard'
+    ) {
+      router.replace('/platform');
+    }
+  }, [isPlatformWorkspace, isSuperAdmin, pathname, profileLoading, router]);
 
   useEffect(() => {
     if (!routeDenied || !accountRole) return;

@@ -15,7 +15,7 @@ import { cn } from '@/lib/utils';
 
 import { SECTION_META, type SettingsSection } from './settings-sections';
 import { SettingsChip, StatusDot } from './settings-chip';
-import { ROLE_META } from './role-meta';
+import { ROLE_META, SUPER_ADMIN_META } from './role-meta';
 
 interface OverviewCounts {
   members: number | null;
@@ -45,6 +45,7 @@ export function SettingsOverview({
     defaultCurrency,
     canManageMembers,
     canEditSettings,
+    isSuperAdmin,
   } = useAuth();
   const { mode, theme } = useTheme();
   const t = useTranslations('Settings.overview');
@@ -170,7 +171,11 @@ export function SettingsOverview({
   const initial = (profile?.full_name || profile?.email || 'U')
     .charAt(0)
     .toUpperCase();
-  const roleMeta = accountRole ? ROLE_META[accountRole] : null;
+  const roleMeta = isSuperAdmin
+    ? SUPER_ADMIN_META
+    : accountRole
+      ? ROLE_META[accountRole]
+      : null;
   const RoleIcon = roleMeta?.icon;
 
   const currencyLabel =
@@ -285,7 +290,7 @@ export function SettingsOverview({
         {roleMeta && RoleIcon ? (
           <SettingsChip variant={roleMeta.variant}>
             <RoleIcon />
-            {tRoles(accountRole!)}
+            {tRoles(roleMeta.label)}
           </SettingsChip>
         ) : null}
       </Card>
