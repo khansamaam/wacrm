@@ -18,6 +18,7 @@ import { FieldsAndTagsPanel } from '@/components/settings/fields-and-tags-panel'
 import { DealsSettings } from '@/components/settings/deals-settings';
 import { MembersTab } from '@/components/settings/members-tab';
 import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
+import { RoleAccessSettings } from '@/components/settings/role-access-settings';
 import {
   resolveAccessibleSection,
   type SettingsSection,
@@ -42,7 +43,7 @@ export default function SettingsPage() {
 function SettingsPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { defaultCurrency, canEditSettings } = useAuth();
+  const { defaultCurrency, canEditSettings, isOwner } = useAuth();
   const { mode } = useTheme();
   const t = useTranslations('Settings');
 
@@ -52,7 +53,8 @@ function SettingsPageInner() {
   // resolve onto their new home; unknown/empty → the Overview landing.
   const section = resolveAccessibleSection(
     searchParams.get('tab'),
-    canEditSettings
+    canEditSettings,
+    isOwner
   );
 
   const go = (next: SettingsSection) => {
@@ -83,6 +85,7 @@ function SettingsPageInner() {
     fields: <FieldsAndTagsPanel />,
     deals: <DealsSettings />,
     members: <MembersTab />,
+    access: <RoleAccessSettings />,
     api: <ApiKeysSettings />,
   };
 
@@ -101,6 +104,7 @@ function SettingsPageInner() {
           onSelect={go}
           hints={hints}
           showWorkspace={canEditSettings}
+          showOwnerOnly={isOwner}
         />
         <div className="min-w-0">{panel[section]}</div>
       </div>

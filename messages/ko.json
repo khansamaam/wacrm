@@ -1218,6 +1218,7 @@
       "tagsCount": "태그 {count}개",
       "fieldsCount": "커스텀 필드 {count}개",
       "appearance": "{mode} 모드 · {theme} 색상",
+      "configureRoleAccess": "각 역할이 열 수 있는 모듈 선택",
       "yourAccount": "내 계정",
       "loading": "불러오는 중…"
     },
@@ -1421,6 +1422,30 @@
       "toastUploadSuccess": "이미지가 업로드되었습니다.",
       "toastUploadFailed": "업로드에 실패했습니다."
     },
+    "access": {
+      "title": "역할 접근 권한",
+      "description": "관리자, 상담원, 뷰어가 확인하고 열 수 있는 최상위 모듈을 선택합니다. 소유자는 항상 전체 접근 권한을 유지합니다.",
+      "restoreDefaults": "기본값 복원",
+      "module": "모듈",
+      "ownerAlways": "소유자는 항상 접근할 수 있습니다",
+      "toggleLabel": "{role}의 {module} 접근 권한",
+      "permissionHint": "모듈 접근 권한은 역할의 접근을 제한하기만 합니다. 활성화된 모듈 안에서 조회, 생성, 수정 또는 삭제할 수 있는지는 기존 역할 권한에 따라 결정됩니다. 개인 프로필과 보안 설정은 모든 사용자에게 계속 제공됩니다.",
+      "save": "접근 권한 저장",
+      "saving": "저장 중…",
+      "saved": "역할 접근 권한이 업데이트되었습니다",
+      "saveFailed": "역할 접근 권한을 업데이트하지 못했습니다",
+      "modules": {
+        "dashboard": "대시보드",
+        "inbox": "받은편지함",
+        "notifications": "알림",
+        "contacts": "연락처",
+        "pipelines": "파이프라인",
+        "broadcasts": "브로드캐스트",
+        "automations": "자동화",
+        "flows": "플로우",
+        "agents": "AI 에이전트"
+      }
+    },
     "roles": {
       "admin": "관리자",
       "adminHint": "멤버 관리 + 모든 기능",
@@ -1510,6 +1535,7 @@
       "fields": "필드 & 태그",
       "deals": "딜 & 통화",
       "members": "팀원",
+      "access": "역할 접근 권한",
       "api": "API 키"
     },
     "groups": {
@@ -1605,7 +1631,7 @@
       "nameLabel": "이름",
       "namePlaceholder": "예: Zapier 자동화",
       "scopesLabel": "권한 범위",
-      "scopesHint": "권한 범위가 없는 키도 <code className=\"text-[11px]\">GET /api/v1/me</code>를 호출해 동작을 확인할 수 있습니다.",
+      "scopesHint": "권한 범위가 없는 키도 <code>GET /api/v1/me</code>를 호출해 동작을 확인할 수 있습니다.",
       "cancel": "취소",
       "creating": "만드는 중…",
       "createKey": "키 생성",

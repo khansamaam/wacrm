@@ -15,6 +15,7 @@
 
 export const API_SCOPES = [
   'messages:send',
+  'messages:sync',
   'messages:read',
   'contacts:read',
   'contacts:write',
@@ -28,6 +29,7 @@ export type ApiScope = (typeof API_SCOPES)[number];
 /** Human-readable descriptions, surfaced in the key-creation UI. */
 export const SCOPE_DESCRIPTIONS: Record<ApiScope, string> = {
   'messages:send': 'Send WhatsApp messages',
+  'messages:sync': 'Sync messages sent directly through Meta',
   'messages:read': 'Read messages and their delivery status',
   'contacts:read': 'List and read contacts',
   'contacts:write': 'Create and update contacts',

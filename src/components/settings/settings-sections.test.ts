@@ -18,6 +18,11 @@ describe('settings access', () => {
     expect(resolveAccessibleSection('members', true)).toBe('members');
   });
 
+  it('keeps role access owner-only', () => {
+    expect(resolveAccessibleSection('access', true, false)).toBe('overview');
+    expect(resolveAccessibleSection('access', true, true)).toBe('access');
+  });
+
   it('redirects Agent and Viewer workspace deep links to Overview', () => {
     expect(resolveAccessibleSection('whatsapp', false)).toBe('overview');
     expect(resolveAccessibleSection('members', false)).toBe('overview');

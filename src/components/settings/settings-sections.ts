@@ -3,6 +3,7 @@ import {
   FileText,
   KeyRound,
   LayoutGrid,
+  LockKeyhole,
   Palette,
   PlugZap,
   Shield,
@@ -32,6 +33,7 @@ export const SETTINGS_SECTIONS = [
   'fields',
   'deals',
   'members',
+  'access',
   'api',
 ] as const;
 
@@ -45,6 +47,7 @@ export interface SectionMeta {
   label: string;
   icon: LucideIcon;
   group: 'top' | 'account' | 'workspace';
+  ownerOnly?: boolean;
 }
 
 export const SECTION_META: Record<SettingsSection, SectionMeta> = {
@@ -108,6 +111,13 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
     icon: UsersRound,
     group: 'workspace',
   },
+  access: {
+    id: 'access',
+    label: 'Role access',
+    icon: LockKeyhole,
+    group: 'workspace',
+    ownerOnly: true,
+  },
   api: { id: 'api', label: 'API keys', icon: KeyRound, group: 'workspace' },
 };
 
@@ -147,10 +157,15 @@ export function isWorkspaceSection(section: SettingsSection): boolean {
  */
 export function resolveAccessibleSection(
   raw: string | null,
-  canAccessWorkspace: boolean
+  canAccessWorkspace: boolean,
+  isOwner = false
 ): SettingsSection {
   const section = resolveSection(raw);
-  return !canAccessWorkspace && isWorkspaceSection(section)
-    ? DEFAULT_SECTION
-    : section;
+  if (!canAccessWorkspace && isWorkspaceSection(section)) {
+    return DEFAULT_SECTION;
+  }
+  if (SECTION_META[section].ownerOnly && !isOwner) {
+    return DEFAULT_SECTION;
+  }
+  return section;
 }

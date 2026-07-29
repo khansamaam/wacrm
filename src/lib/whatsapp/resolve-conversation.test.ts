@@ -13,6 +13,7 @@ type ContactRow = { id: string; phone: string; name?: string | null };
 
 interface Script {
   config?: { user_id: string } | null; // whatsapp_config.maybeSingle
+  accountOwner?: string; // accounts.maybeSingle fallback audit owner
   contactCandidates?: ContactRow[]; // contacts .like (same every call)
   /** Per-call `.like` results — overrides contactCandidates. Lets a
    *  test simulate "miss, then hit" for the unique-race path. */
@@ -24,7 +25,7 @@ interface Script {
   existingConversation?: { id: string } | null; // conversations select.limit(1)
   /** Per-call conversation lookup results — overrides existingConversation.
    *  Lets a test simulate "miss, then hit" for the unique-race path. */
-  existingConversationByCall?: (({ id: string } | null))[];
+  existingConversationByCall?: ({ id: string } | null)[];
   insertedConversationId?: string; // conversations insert -> single
   insertConversationError?: { code?: string } | null;
 }
@@ -68,6 +69,13 @@ function makeDb(script: Script): SupabaseClient {
     maybeSingle: () => {
       if (table === 'whatsapp_config')
         return Promise.resolve({ data: script.config ?? null, error: null });
+      if (table === 'accounts')
+        return Promise.resolve({
+          data: script.accountOwner
+            ? { owner_user_id: script.accountOwner }
+            : null,
+          error: null,
+        });
       return Promise.resolve({ data: null, error: null });
     },
     single: () => {
@@ -132,6 +140,25 @@ describe('resolveConversationByPhone', () => {
     await expect(
       resolveConversationByPhone(db, 'acct', '+14155550123')
     ).rejects.toBeInstanceOf(SendMessageError);
+  });
+
+  it('can resolve an external message without a local WhatsApp config', async () => {
+    const db = makeDb({
+      config: null,
+      accountOwner: 'owner-1',
+      contactCandidates: [{ id: 'c1', phone: '14155550123' }],
+      existingConversation: { id: 'cv1' },
+    });
+
+    await expect(
+      resolveConversationByPhone(db, 'acct', '+14155550123', null, {
+        requireWhatsAppConfig: false,
+      })
+    ).resolves.toEqual({
+      conversationId: 'cv1',
+      contactId: 'c1',
+      contactCreated: false,
+    });
   });
 
   it('returns the existing contact + conversation without creating', async () => {

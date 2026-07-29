@@ -27,11 +27,13 @@ export function SettingsRail({
   onSelect,
   hints,
   showWorkspace = true,
+  showOwnerOnly = false,
 }: {
   active: SettingsSection;
   onSelect: (section: SettingsSection) => void;
   hints?: Partial<Record<SettingsSection, ReactNode>>;
   showWorkspace?: boolean;
+  showOwnerOnly?: boolean;
 }) {
   const t = useTranslations('Settings');
   const activeRef = useRef<HTMLButtonElement>(null);
@@ -62,7 +64,9 @@ export function SettingsRail({
         ({ group }) => group !== 'workspace' || showWorkspace
       ).map(({ label, group }) => {
         const items = SETTINGS_SECTIONS.filter(
-          (s) => SECTION_META[s].group === group
+          (s) =>
+            SECTION_META[s].group === group &&
+            (!SECTION_META[s].ownerOnly || showOwnerOnly)
         );
         return (
           <div

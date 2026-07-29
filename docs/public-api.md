@@ -44,6 +44,7 @@ it. Grant the minimum.
 | Scope                | Allows                                   |
 | -------------------- | ---------------------------------------- |
 | `messages:send`      | Send WhatsApp messages                   |
+| `messages:sync`      | Sync messages sent directly through Meta |
 | `messages:read`      | Read messages and delivery status        |
 | `contacts:read`      | List and read contacts                   |
 | `contacts:write`     | Create and update contacts               |
@@ -163,6 +164,66 @@ Response (201):
 Domain error codes beyond the table above: `whatsapp_not_configured`
 (400), `meta_error` (502 — the request reached Meta and it rejected the
 send), `template_malformed` (500).
+
+### `POST /api/v1/messages/sync`
+
+Mirror an outbound message that another system already sent directly
+through Meta. Scope: `messages:sync`. This endpoint **does not send a
+WhatsApp message**; it records the message in the CRM inbox.
+
+```bash
+curl -X POST https://your-crm.example.com/api/v1/messages/sync \
+  -H "Authorization: Bearer wacrm_live_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "to": "+14155550123",
+    "whatsapp_message_id": "wamid.HBgL...",
+    "type": "template",
+    "text": "Hello Jane, your order A123 is confirmed.",
+    "media_url": "https://cdn.example.com/order.jpg",
+    "template": {
+      "name": "order_update",
+      "body_text": "Hello Jane, your order A123 is confirmed.",
+      "header_type": "image",
+      "header_media_url": "https://cdn.example.com/order.jpg",
+      "footer_text": "Acme Support",
+      "buttons": [{
+        "type": "URL",
+        "text": "View order",
+        "url": "https://example.com/orders/A123"
+      }]
+    },
+    "timestamp": "2026-07-29T12:30:00Z",
+    "status": "sent",
+    "name": "Jane Doe"
+  }'
+```
+
+Required fields are `to`, `whatsapp_message_id`, `type`, `timestamp`,
+and `status`. `type` accepts `text`, `template`, `image`, `video`,
+`document`, or `audio`. `status` accepts `sending`, `sent`,
+`delivered`, `read`, or `failed`. Media URLs must be public HTTPS
+URLs. A failed report may include:
+
+```json
+{
+  "delivery_error": {
+    "code": "131049",
+    "message": "Message not delivered to maintain healthy ecosystem engagement"
+  }
+}
+```
+
+`recipient_phone` and `meta_message_id` are accepted as aliases for
+`to` and `whatsapp_message_id`. `timestamp` may be ISO-8601, Unix
+seconds, or Unix milliseconds.
+
+The pair of conversation and `whatsapp_message_id` is the idempotency
+key. The first request returns **201** with `created: true`; retries
+update the same message and return **200** with `created: false`.
+Delivery status only advances, so a late `sent` report cannot move a
+`delivered` or `read` message backwards. Later Meta status webhooks
+continue updating the row because its Meta message ID is preserved.
 
 ### `GET /api/v1/contacts`
 

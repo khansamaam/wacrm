@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 import {
   createContext,
@@ -9,17 +9,24 @@ import {
   useMemo,
   useRef,
   type ReactNode,
-} from "react";
-import { createClient } from "@/lib/supabase/client";
-import type { User } from "@supabase/supabase-js";
-import { DEFAULT_CURRENCY } from "@/lib/currency";
+} from 'react';
+import { createClient } from '@/lib/supabase/client';
+import type { User } from '@supabase/supabase-js';
+import { DEFAULT_CURRENCY } from '@/lib/currency';
 import {
   canEditSettings as canEditSettingsFor,
   canManageMembers as canManageMembersFor,
   canSendMessages as canSendMessagesFor,
   isAccountRole,
   type AccountRole,
-} from "@/lib/auth/roles";
+} from '@/lib/auth/roles';
+import {
+  DEFAULT_MODULE_ACCESS,
+  canAccessModule as canAccessModuleFor,
+  normalizeModuleAccess,
+  type AppModule,
+  type ModuleAccessConfig,
+} from '@/lib/auth/module-access';
 
 interface Profile {
   id: string;
@@ -43,6 +50,8 @@ interface AccountSummary {
   /** Default deal currency (ISO-4217). NOT NULL DEFAULT 'USD' in the
    *  DB (migration 021); narrowed to DEFAULT_CURRENCY when absent. */
   default_currency: string;
+  /** Owner-configured top-level module visibility for each non-owner role. */
+  moduleAccess: ModuleAccessConfig;
 }
 
 interface AuthContextValue {
@@ -102,6 +111,10 @@ interface AuthContextValue {
   canEditSettings: boolean;
   /** True if the caller can send messages and edit operational data (agent+). */
   canSendMessages: boolean;
+  /** Normalized account-level module visibility configuration. */
+  moduleAccess: ModuleAccessConfig;
+  /** True when the current role may open this top-level product module. */
+  canAccessModule: (module: AppModule) => boolean;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -136,15 +149,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     lastFetchedUserIdRef.current = userId;
     try {
       const { data, error } = await supabase
-        .from("profiles")
+        .from('profiles')
         .select(
-          "id, full_name, email, avatar_url, role, beta_features, account_id, account_role",
+          'id, full_name, email, avatar_url, role, beta_features, account_id, account_role'
         )
-        .eq("user_id", userId)
+        .eq('user_id', userId)
         .maybeSingle();
 
       if (error) {
-        console.error("[AuthProvider] fetchProfile error:", {
+        console.error('[AuthProvider] fetchProfile error:', {
           message: error.message,
           details: error.details,
           hint: error.hint,
@@ -168,24 +181,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         let accountRow: AccountSummary | null = null;
         if (data.account_id) {
           const { data: account, error: accountErr } = await supabase
-            .from("accounts")
+            .from('accounts')
             // default_currency added in migration 021; narrowed to the
             // USD fallback below for older schemas where it reads null.
-            .select("id, name, default_currency")
-            .eq("id", data.account_id)
+            .select('id, name, default_currency')
+            .eq('id', data.account_id)
             .maybeSingle();
           if (accountErr) {
-            console.error("[AuthProvider] fetchAccount error:", {
+            console.error('[AuthProvider] fetchAccount error:', {
               message: accountErr.message,
               details: accountErr.details,
               hint: accountErr.hint,
               code: accountErr.code,
             });
           } else if (account) {
+            // Module access arrived later than the account-sharing schema.
+            // Read it independently so deployments remain usable while
+            // migration 039 is being rolled out: an older database can still
+            // load the account and falls back to the historic "all modules"
+            // behaviour instead of blanking the authenticated shell.
+            const { data: accessRow, error: accessErr } = await supabase
+              .from('accounts')
+              .select('module_access')
+              .eq('id', data.account_id)
+              .maybeSingle();
+            if (accessErr) {
+              // This is expected before migration 039. It is non-fatal and
+              // must not use console.error — Next's development overlay turns
+              // that diagnostic into a blocking screen.
+              console.warn(
+                '[AuthProvider] module access unavailable; using defaults:',
+                accessErr.message
+              );
+            }
             accountRow = {
               id: account.id,
               name: account.name,
               default_currency: account.default_currency ?? DEFAULT_CURRENCY,
+              moduleAccess: normalizeModuleAccess(accessRow?.module_access),
             };
           }
         }
@@ -218,7 +251,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         lastFetchedUserIdRef.current = null;
       }
     } catch (err) {
-      console.error("[AuthProvider] fetchProfile threw:", err);
+      console.error('[AuthProvider] fetchProfile threw:', err);
       lastFetchedUserIdRef.current = null;
     } finally {
       setProfileLoading(false);
@@ -231,7 +264,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const safetyTimer = setTimeout(() => {
       if (mounted) {
-        console.warn("[AuthProvider] getSession() timed out after 3s");
+        console.warn('[AuthProvider] getSession() timed out after 3s');
         setLoading(false);
         setProfileLoading(false);
       }
@@ -244,7 +277,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           error,
         } = await supabase.auth.getSession();
 
-        if (error) console.error("[AuthProvider] getSession error:", error.message);
+        if (error)
+          console.error('[AuthProvider] getSession error:', error.message);
 
         if (!mounted) return;
         const currentUser = session?.user ?? null;
@@ -263,7 +297,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setProfileLoading(false);
         }
       } catch (err) {
-        console.error("[AuthProvider] init threw:", err);
+        console.error('[AuthProvider] init threw:', err);
       } finally {
         if (mounted) setLoading(false);
         clearTimeout(safetyTimer);
@@ -306,7 +340,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setProfile(null);
     setAccount(null);
-    window.location.href = "/login";
+    window.location.href = '/login';
   }, []);
 
   const refreshProfile = useCallback(async () => {
@@ -323,15 +357,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return {
       accountRole: role,
       accountId: profile?.account_id ?? null,
-      isOwner: role === "owner",
-      isAdmin: role === "admin",
-      isAgent: role === "agent",
-      isViewer: role === "viewer",
+      isOwner: role === 'owner',
+      isAdmin: role === 'admin',
+      isAgent: role === 'agent',
+      isViewer: role === 'viewer',
       canManageMembers: role ? canManageMembersFor(role) : false,
       canEditSettings: role ? canEditSettingsFor(role) : false,
       canSendMessages: role ? canSendMessagesFor(role) : false,
+      moduleAccess: account?.moduleAccess ?? DEFAULT_MODULE_ACCESS,
+      canAccessModule: (module: AppModule) =>
+        role && account?.moduleAccess
+          ? canAccessModuleFor(role, module, account.moduleAccess)
+          : false,
     };
-  }, [profile?.account_role, profile?.account_id]);
+  }, [profile?.account_role, profile?.account_id, account?.moduleAccess]);
 
   return (
     <AuthContext.Provider
@@ -369,7 +408,7 @@ export function useAuth(): AuthContextValue {
       loading: false,
       profileLoading: false,
       signOut: async () => {
-        window.location.href = "/login";
+        window.location.href = '/login';
       },
       refreshProfile: async () => {},
       account: null,
@@ -383,6 +422,8 @@ export function useAuth(): AuthContextValue {
       canManageMembers: false,
       canEditSettings: false,
       canSendMessages: false,
+      moduleAccess: DEFAULT_MODULE_ACCESS,
+      canAccessModule: () => false,
     };
   }
   return ctx;

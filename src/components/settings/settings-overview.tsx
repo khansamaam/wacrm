@@ -41,6 +41,7 @@ export function SettingsOverview({
     profile,
     accountId,
     accountRole,
+    isOwner,
     defaultCurrency,
     canManageMembers,
     canEditSettings,
@@ -247,10 +248,16 @@ export function SettingsOverview({
       loading: false,
       subtitle: t('appearance', { mode: cap(mode), theme: themeName }),
     },
+    {
+      section: 'access',
+      loading: false,
+      subtitle: t('configureRoleAccess'),
+    },
   ];
   const tiles = allTiles.filter(
     ({ section }) =>
-      canEditSettings || SECTION_META[section].group !== 'workspace'
+      (canEditSettings || SECTION_META[section].group !== 'workspace') &&
+      (!SECTION_META[section].ownerOnly || isOwner)
   );
 
   return (
