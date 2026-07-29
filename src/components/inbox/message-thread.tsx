@@ -47,7 +47,10 @@ import {
   type SendMediaPayload,
 } from "./message-composer";
 import { deleteAccountMedia } from "@/lib/storage/upload-media";
-import { TemplatePicker } from "./template-picker";
+import {
+  TemplatePicker,
+  type TemplateSendValues,
+} from "./template-picker";
 import { AiThreadBanner } from "./ai-thread-banner";
 import { buildReplyPreview } from "./reply-quote";
 import { toast } from "sonner";
@@ -635,14 +638,7 @@ export function MessageThread({
   }, []);
 
   const handleSendTemplate = useCallback(
-    async (
-      template: MessageTemplate,
-      values: {
-        body: string[];
-        headerText?: string;
-        buttonParams?: Record<number, string>;
-      },
-    ) => {
+    async (template: MessageTemplate, values: TemplateSendValues) => {
       if (!conversation) return;
 
       const renderedBody = renderTemplateBody(template.body_text, values.body);
@@ -673,11 +669,12 @@ export function MessageThread({
             // (header media + URL button substitution). Body values
             // are mirrored under both shapes so the route can fall
             // back if the template row isn't found locally.
-            template_message_params: {
-              body: values.body,
-              headerText: values.headerText,
-              buttonParams: values.buttonParams,
-            },
+          template_message_params: {
+            body: values.body,
+            headerText: values.headerText,
+            headerMediaUrl: values.headerMediaUrl,
+            buttonParams: values.buttonParams,
+          },
             template_params: values.body,
             content_text: renderedBody,
           }),

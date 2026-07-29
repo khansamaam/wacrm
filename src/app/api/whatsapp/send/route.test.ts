@@ -259,6 +259,32 @@ describe('POST /api/whatsapp/send — contact_id template path', () => {
     })
   })
 
+  it('forwards a send-time media URL for a custom image-header template', async () => {
+    templateRow = {
+      id: 'template-1',
+      user_id: 'user-1',
+      name: 'order_update',
+      language: 'en_US',
+      header_type: 'image',
+      body_text: 'Hello {{1}}, order {{2}} is ready.',
+    }
+
+    const res = await postContactTemplate({
+      template_message_params: {
+        body: ['Acme', '#1234'],
+        headerMediaUrl: 'https://cdn.example.com/order-ready.jpg',
+      },
+    })
+
+    expect(res.status).toBe(200)
+    const args = (sendTemplateMessage.mock.calls[0] as unknown[])[0] as {
+      messageParams: Record<string, unknown>
+    }
+    expect(args.messageParams).toMatchObject({
+      headerMediaUrl: 'https://cdn.example.com/order-ready.jpg',
+    })
+  })
+
   it('404s when the contact is not in the caller account', async () => {
     contactRow = null
 
