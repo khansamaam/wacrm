@@ -14,6 +14,9 @@ import {
   ImageOff,
   CornerDownLeft,
   Sparkles,
+  Phone,
+  ExternalLink,
+  Copy,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ReplyQuote } from "./reply-quote";
@@ -119,6 +122,138 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
   );
 }
 
+function WhatsAppTemplateText({ text }: { text: string }) {
+  const parts = text.split(/(\*[^*\n]+\*|_[^_\n]+_|~[^~\n]+~)/g);
+  return (
+    <p className="whitespace-pre-wrap break-words text-sm">
+      {parts.map((part, index) => {
+        if (part.startsWith("*") && part.endsWith("*")) {
+          return <strong key={index}>{part.slice(1, -1)}</strong>;
+        }
+        if (part.startsWith("_") && part.endsWith("_")) {
+          return <em key={index}>{part.slice(1, -1)}</em>;
+        }
+        if (part.startsWith("~") && part.endsWith("~")) {
+          return <s key={index}>{part.slice(1, -1)}</s>;
+        }
+        return part;
+      })}
+    </p>
+  );
+}
+
+function TemplateMessageContent({
+  message,
+  t,
+}: {
+  message: Message;
+  t: ReturnType<typeof useTranslations>;
+}) {
+  const payload = message.template_payload;
+  if (!payload) {
+    return (
+      <div>
+        <span className="mb-1 inline-flex items-center gap-1 rounded bg-primary/20 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+          <LayoutTemplate className="h-3 w-3" />
+          {t("template")}
+        </span>
+        <WhatsAppTemplateText
+          text={message.content_text || message.template_name || t("template")}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-w-64 max-w-sm">
+      {payload.header_type === "image" && payload.header_media_url ? (
+        <div className="mb-2 overflow-hidden rounded-lg">
+          <MediaImage url={payload.header_media_url} alt="" />
+        </div>
+      ) : null}
+      {payload.header_type === "video" && payload.header_media_url ? (
+        <video
+          src={payload.header_media_url}
+          controls
+          className="mb-2 max-h-64 w-full rounded-lg"
+        />
+      ) : null}
+      {payload.header_type === "document" && payload.header_media_url ? (
+        <a
+          href={payload.header_media_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mb-2 flex items-center gap-2 rounded-lg bg-primary-foreground/10 px-3 py-2 text-sm"
+        >
+          <FileText className="h-4 w-4 shrink-0" />
+          <span className="truncate">{t("document")}</span>
+        </a>
+      ) : null}
+      {payload.header_text ? (
+        <p className="mb-1 text-sm font-semibold">{payload.header_text}</p>
+      ) : null}
+      <WhatsAppTemplateText text={payload.body_text} />
+      {payload.footer_text ? (
+        <p className="mt-1.5 text-xs text-primary-foreground/70">
+          {payload.footer_text}
+        </p>
+      ) : null}
+      {payload.buttons?.length ? (
+        <div className="mt-2 space-y-1 border-t border-primary-foreground/20 pt-2">
+          {payload.buttons.map((button, index) => {
+            const content = (
+              <>
+                {button.type === "PHONE_NUMBER" ? (
+                  <Phone className="h-4 w-4" />
+                ) : button.type === "URL" ? (
+                  <ExternalLink className="h-4 w-4" />
+                ) : button.type === "COPY_CODE" ? (
+                  <Copy className="h-4 w-4" />
+                ) : (
+                  <CornerDownLeft className="h-4 w-4" />
+                )}
+                <span className="truncate">{button.text}</span>
+              </>
+            );
+            const className =
+              "flex w-full items-center justify-center gap-2 rounded-md bg-primary-foreground/15 px-3 py-2 text-center text-sm font-medium text-primary-foreground";
+
+            if (button.type === "URL" && button.url) {
+              return (
+                <a
+                  key={index}
+                  href={button.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={className}
+                >
+                  {content}
+                </a>
+              );
+            }
+            if (button.type === "PHONE_NUMBER" && button.phone_number) {
+              return (
+                <a
+                  key={index}
+                  href={`tel:${button.phone_number}`}
+                  className={className}
+                >
+                  {content}
+                </a>
+              );
+            }
+            return (
+              <div key={index} className={className}>
+                {content}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function MessageContent({ message, t }: { message: Message, t: ReturnType<typeof useTranslations> }) {
   switch (message.content_type) {
     case "text":
@@ -194,17 +329,7 @@ function MessageContent({ message, t }: { message: Message, t: ReturnType<typeof
       );
 
     case "template":
-      return (
-        <div>
-          <span className="mb-1 inline-flex items-center gap-1 rounded bg-primary/20 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-            <LayoutTemplate className="h-3 w-3" />
-            {t("template")}
-          </span>
-          <p className="mt-1 whitespace-pre-wrap break-words text-sm">
-            {message.content_text || message.template_name || t("template")}
-          </p>
-        </div>
-      );
+      return <TemplateMessageContent message={message} t={t} />;
 
     case "location":
       return (

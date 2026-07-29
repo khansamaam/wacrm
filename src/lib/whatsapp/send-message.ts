@@ -45,6 +45,8 @@ import {
 import type { MessageTemplate } from '@/types';
 import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard';
 import { renderTemplateBody } from '@/lib/whatsapp/template-render';
+import { buildTemplateMessageSnapshot } from '@/lib/whatsapp/template-message-snapshot';
+import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder';
 
 export const MEDIA_KINDS = ['image', 'video', 'document', 'audio'] as const;
 export const VALID_MESSAGE_TYPES = [
@@ -81,7 +83,7 @@ export interface SendMessageParams {
   /** Legacy positional body params (only used if messageParams.body unset). */
   templateParams?: string[];
   /** Structured template params (header/body/buttons). */
-  templateMessageParams?: unknown;
+  templateMessageParams?: SendTimeParams;
   /** Structured payload for `messageType === 'interactive'`. */
   interactivePayload?: InteractiveMessagePayload | null;
   replyToMessageId?: string | null;
@@ -330,15 +332,13 @@ export async function sendMessageToConversation(
     templateRow = data ?? null;
   }
 
-  const structuredTemplateBodyParams =
-    templateMessageParams &&
-    typeof templateMessageParams === 'object' &&
-    'body' in templateMessageParams &&
-    Array.isArray(templateMessageParams.body)
-      ? templateMessageParams.body.filter(
-          (value): value is string => typeof value === 'string'
-        )
-      : null;
+  const structuredTemplateBodyParams = Array.isArray(
+    templateMessageParams?.body,
+  )
+    ? templateMessageParams.body.filter(
+        (value): value is string => typeof value === 'string',
+      )
+    : null;
   const renderedTemplateBody =
     messageType === 'template' && templateRow?.body_text
       ? renderTemplateBody(
@@ -467,6 +467,14 @@ export async function sendMessageToConversation(
     messageType === 'interactive' ? interactivePayload!.body : null;
   const persistedContentText =
     interactiveBody ?? contentText ?? renderedTemplateBody ?? null;
+  const templatePayload =
+    messageType === 'template' && templateRow && persistedContentText
+      ? buildTemplateMessageSnapshot(
+          templateRow,
+          persistedContentText,
+          templateMessageParams,
+        )
+      : null;
 
   const { data: messageRecord, error: msgError } = await db
     .from('messages')
@@ -477,6 +485,7 @@ export async function sendMessageToConversation(
       content_text: persistedContentText,
       media_url: mediaUrl || null,
       template_name: templateName || null,
+      template_payload: templatePayload,
       interactive_payload:
         messageType === 'interactive' ? interactivePayload : null,
       message_id: waMessageId,

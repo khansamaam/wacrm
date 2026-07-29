@@ -267,6 +267,14 @@ describe('POST /api/whatsapp/send — contact_id template path', () => {
       language: 'en_US',
       header_type: 'image',
       body_text: 'Hello {{1}}, order {{2}} is ready.',
+      footer_text: 'Contact us today!',
+      buttons: [
+        {
+          type: 'PHONE_NUMBER',
+          text: 'CALL NOW',
+          phone_number: '+971500000000',
+        },
+      ],
     }
 
     const res = await postContactTemplate({
@@ -282,6 +290,21 @@ describe('POST /api/whatsapp/send — contact_id template path', () => {
     }
     expect(args.messageParams).toMatchObject({
       headerMediaUrl: 'https://cdn.example.com/order-ready.jpg',
+    })
+    expect(messageInserts[0]).toMatchObject({
+      template_payload: {
+        header_type: 'image',
+        header_media_url: 'https://cdn.example.com/order-ready.jpg',
+        body_text: 'Hello Acme, order #1234 is ready.',
+        footer_text: 'Contact us today!',
+        buttons: [
+          {
+            type: 'PHONE_NUMBER',
+            text: 'CALL NOW',
+            phone_number: '+971500000000',
+          },
+        ],
+      },
     })
   })
 

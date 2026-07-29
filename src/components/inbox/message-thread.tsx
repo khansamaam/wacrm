@@ -55,6 +55,7 @@ import { AiThreadBanner } from "./ai-thread-banner";
 import { buildReplyPreview } from "./reply-quote";
 import { toast } from "sonner";
 import { renderTemplateBody } from "@/lib/whatsapp/template-render";
+import { buildTemplateMessageSnapshot } from "@/lib/whatsapp/template-message-snapshot";
 
 interface ReplyDraft {
   id: string;
@@ -651,6 +652,11 @@ export function MessageThread({
         content_type: "template",
         content_text: renderedBody,
         template_name: template.name,
+        template_payload: buildTemplateMessageSnapshot(
+          template,
+          renderedBody,
+          values,
+        ),
         status: "sending",
         created_at: new Date().toISOString(),
       };
@@ -669,12 +675,12 @@ export function MessageThread({
             // (header media + URL button substitution). Body values
             // are mirrored under both shapes so the route can fall
             // back if the template row isn't found locally.
-          template_message_params: {
-            body: values.body,
-            headerText: values.headerText,
-            headerMediaUrl: values.headerMediaUrl,
-            buttonParams: values.buttonParams,
-          },
+            template_message_params: {
+              body: values.body,
+              headerText: values.headerText,
+              headerMediaUrl: values.headerMediaUrl,
+              buttonParams: values.buttonParams,
+            },
             template_params: values.body,
             content_text: renderedBody,
           }),

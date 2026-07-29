@@ -218,6 +218,28 @@ export type ContentType =
   | 'interactive';
 export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
 
+export interface TemplateMessageButtonSnapshot {
+  type: 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER' | 'COPY_CODE';
+  text: string;
+  url?: string;
+  phone_number?: string;
+  code?: string;
+}
+
+/**
+ * The exact presentation data used for one outbound template delivery.
+ * Stored on the message so Inbox still matches what the customer saw if
+ * the source template is later edited, re-synced, or deleted.
+ */
+export interface TemplateMessageSnapshot {
+  header_type?: 'text' | 'image' | 'video' | 'document';
+  header_text?: string;
+  header_media_url?: string;
+  body_text: string;
+  footer_text?: string;
+  buttons?: TemplateMessageButtonSnapshot[];
+}
+
 export interface Message {
   id: string;
   conversation_id: string;
@@ -227,6 +249,7 @@ export interface Message {
   content_text?: string;
   media_url?: string;
   template_name?: string;
+  template_payload?: TemplateMessageSnapshot;
   message_id?: string;
   status: MessageStatus;
   created_at: string;
