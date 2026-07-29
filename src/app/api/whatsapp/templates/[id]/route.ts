@@ -171,6 +171,7 @@ export async function PATCH(
         })
       } catch (e) {
         const message = e instanceof Error ? e.message : 'Meta edit failed.'
+        console.error('[templates/edit] Meta rejected template:', message)
         await supabase
           .from('message_templates')
           .update({
@@ -178,7 +179,7 @@ export async function PATCH(
             last_submitted_at: new Date().toISOString(),
           })
           .eq('id', id)
-        return NextResponse.json({ error: message }, { status: 502 })
+        return NextResponse.json({ error: message }, { status: 422 })
       }
     }
 

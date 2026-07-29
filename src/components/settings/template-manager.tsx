@@ -124,6 +124,43 @@ function emptyButton(type: TemplateButton['type']): TemplateButton {
   }
 }
 
+function normalizeMediaUrl(value: string): string {
+  const trimmed = value.trim();
+  if (/^http:\/\//i.test(trimmed)) {
+    return `https://${trimmed.slice('http://'.length)}`;
+  }
+  return trimmed;
+}
+
+async function readTemplateApiResponse(
+  response: Response,
+): Promise<Record<string, unknown>> {
+  const body = await response.text();
+  const contentType = response.headers.get('content-type') ?? '';
+
+  if (!body) return {};
+
+  if (contentType.includes('application/json')) {
+    try {
+      return JSON.parse(body) as Record<string, unknown>;
+    } catch {
+      throw new Error(
+        `Template API returned invalid JSON (HTTP ${response.status}).`,
+      );
+    }
+  }
+
+  if (!response.ok && /^\s*<!doctype html/i.test(body)) {
+    throw new Error(
+      `Cloudflare or the origin server returned an HTML error page (HTTP ${response.status}). Check that the production Next.js process and Cloudflare Tunnel are running, then retry.`,
+    );
+  }
+
+  throw new Error(
+    `Template API returned an unexpected ${contentType || 'non-JSON'} response (HTTP ${response.status}).`,
+  );
+}
+
 export function TemplateManager() {
   const t = useTranslations('Settings.templates');
   const supabase = createClient();
@@ -223,7 +260,7 @@ export function TemplateManager() {
         form.header_format === 'text' ? form.header_content.trim() : undefined,
       header_media_url:
         form.header_format !== 'none' && form.header_format !== 'text'
-          ? form.header_media_url.trim() || undefined
+          ? normalizeMediaUrl(form.header_media_url) || undefined
           : undefined,
       body_text: form.body_text.trim(),
       footer_text: form.footer_text.trim() || undefined,
@@ -272,10 +309,11 @@ export function TemplateManager() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(buildSubmitPayload()),
       });
-      const data = await res.json();
+      const data = await readTemplateApiResponse(res);
       if (!res.ok) {
         throw new Error(
-          data?.error || `${isEdit ? 'Edit' : 'Submit'} failed (HTTP ${res.status})`,
+          (typeof data.error === 'string' && data.error) ||
+            `${isEdit ? 'Edit' : 'Submit'} failed (HTTP ${res.status})`,
         );
       }
       // Refresh first, then close — re-opening the dialog
@@ -837,14 +875,17 @@ export function TemplateManager() {
                     placeholder={t('mediaUrlPlaceholder', { format: form.header_format })}
                     value={form.header_media_url}
                     onChange={(e) =>
-                      setForm({ ...form, header_media_url: e.target.value })
+                      setForm({
+                        ...form,
+                        header_media_url: normalizeMediaUrl(e.target.value),
+                      })
                     }
                     className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
                   />
                   {form.header_format === 'image' && form.header_media_url && (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
-                      src={form.header_media_url}
+                      src={normalizeMediaUrl(form.header_media_url)}
                       alt="Header sample"
                       className="max-h-28 rounded-md border border-border object-contain"
                     />

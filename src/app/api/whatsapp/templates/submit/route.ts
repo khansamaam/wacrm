@@ -199,6 +199,7 @@ export async function POST(request: Request) {
         metaStatus = meta.status
       } catch (e) {
         const message = e instanceof Error ? e.message : 'Meta submit failed.'
+        console.error('[templates/submit] Meta rejected template:', message)
         // Persist the failure so the user can retry; row stays DRAFT
         // until they fix and re-submit.
         await upsertTemplateRow(
@@ -216,7 +217,10 @@ export async function POST(request: Request) {
               ? 'Meta rate limit hit (100 template creates per hour). Try again later.'
               : message,
           },
-          { status: isRateLimit ? 429 : 502 },
+          // Meta template validation failures are actionable form errors,
+          // not an origin gateway outage. Returning 502 makes Cloudflare
+          // replace this JSON with its branded HTML error page.
+          { status: isRateLimit ? 429 : 422 },
         )
       }
     }
