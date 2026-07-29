@@ -41,6 +41,7 @@ import {
   LayoutTemplate,
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { renderTemplateBody } from '@/lib/whatsapp/template-render';
 
 interface ContactDetailViewProps {
   open: boolean;
@@ -331,6 +332,7 @@ export function ContactDetailView({
     if (!contactId) return;
     setSendingTemplate(true);
     try {
+      const renderedBody = renderTemplateBody(template.body_text, values.body);
       const res = await fetch('/api/whatsapp/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -347,6 +349,7 @@ export function ContactDetailView({
             buttonParams: values.buttonParams,
           },
           template_params: values.body,
+          content_text: renderedBody,
         }),
       });
 

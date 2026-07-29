@@ -44,6 +44,7 @@ import {
 } from '@/lib/whatsapp/phone-utils';
 import type { MessageTemplate } from '@/types';
 import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard';
+import { renderTemplateBody } from '@/lib/whatsapp/template-render';
 
 export const MEDIA_KINDS = ['image', 'video', 'document', 'audio'] as const;
 export const VALID_MESSAGE_TYPES = [
@@ -329,6 +330,23 @@ export async function sendMessageToConversation(
     templateRow = data ?? null;
   }
 
+  const structuredTemplateBodyParams =
+    templateMessageParams &&
+    typeof templateMessageParams === 'object' &&
+    'body' in templateMessageParams &&
+    Array.isArray(templateMessageParams.body)
+      ? templateMessageParams.body.filter(
+          (value): value is string => typeof value === 'string'
+        )
+      : null;
+  const renderedTemplateBody =
+    messageType === 'template' && templateRow?.body_text
+      ? renderTemplateBody(
+          templateRow.body_text,
+          structuredTemplateBodyParams ?? templateParams ?? []
+        )
+      : null;
+
   const attempt = async (phone: string): Promise<string> => {
     if (messageType === 'template') {
       const result = await sendTemplateMessage({
@@ -447,6 +465,8 @@ export async function sendMessageToConversation(
   // payload so the thread can re-render the buttons / rows.
   const interactiveBody =
     messageType === 'interactive' ? interactivePayload!.body : null;
+  const persistedContentText =
+    interactiveBody ?? contentText ?? renderedTemplateBody ?? null;
 
   const { data: messageRecord, error: msgError } = await db
     .from('messages')
@@ -454,7 +474,7 @@ export async function sendMessageToConversation(
       conversation_id: conversationId,
       sender_type: 'agent',
       content_type: messageType,
-      content_text: interactiveBody ?? contentText ?? null,
+      content_text: persistedContentText,
       media_url: mediaUrl || null,
       template_name: templateName || null,
       interactive_payload:
@@ -478,16 +498,32 @@ export async function sendMessageToConversation(
   const lastMessageText =
     messageType === 'interactive'
       ? interactivePayloadPreviewText(interactivePayload!)
-      : contentText || `[${messageType}]`;
+      : persistedContentText ||
+        (messageType === 'template' && templateName
+          ? `Template: ${templateName}`
+          : `[${messageType}]`);
 
-  await db
+  const now = new Date().toISOString();
+  const { error: conversationUpdateError } = await db
     .from('conversations')
     .update({
       last_message_text: lastMessageText,
-      last_message_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      last_message_at: now,
+      updated_at: now,
     })
     .eq('id', conversationId);
+
+  if (conversationUpdateError) {
+    console.error(
+      '[send-message] error updating conversation preview:',
+      conversationUpdateError
+    );
+    throw new SendMessageError(
+      'db_error',
+      `Message sent and saved, but the Inbox conversation could not be updated: ${conversationUpdateError.message}`,
+      500
+    );
+  }
 
   // Pause any active Flow run for this contact — the agent stepping in
   // is the strongest "yield, human is here" signal. Best-effort.

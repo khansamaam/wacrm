@@ -14,6 +14,7 @@ const messageInserts: Array<Record<string, unknown>> = []
 // Toggles for the per-test scenario.
 let existingConversation: Record<string, unknown> | null = null
 let contactRow: Record<string, unknown> | null = null
+let templateRow: Record<string, unknown> | null = null
 // A conversation created during the request becomes retrievable by id —
 // the shared send core re-loads the conversation (with its contact) from
 // just the id, so the mock must model insert-then-select-by-id.
@@ -53,7 +54,7 @@ function makeSupabaseMock() {
             error: null,
           }
         case 'message_templates':
-          return { data: null, error: null }
+          return { data: templateRow, error: null }
         default:
           return { data: null, error: null }
       }
@@ -166,6 +167,7 @@ function postContactTemplate(overrides: Record<string, unknown> = {}) {
         template_language: 'en_US',
         template_message_params: { body: ['Acme', '#1234'] },
         template_params: ['Acme', '#1234'],
+        content_text: 'Hello Acme, order #1234 is ready.',
         ...overrides,
       }),
     }),
@@ -179,6 +181,7 @@ describe('POST /api/whatsapp/send — contact_id template path', () => {
     existingConversation = null
     createdConversation = null
     contactRow = CONTACT
+    templateRow = null
     supabaseMock = makeSupabaseMock()
     sendTemplateMessage.mockClear()
   })
@@ -217,6 +220,7 @@ describe('POST /api/whatsapp/send — contact_id template path', () => {
     expect(messageInserts[0]).toMatchObject({
       conversation_id: 'conv-new',
       content_type: 'template',
+      content_text: 'Hello Acme, order #1234 is ready.',
       template_name: 'order_update',
       sender_type: 'agent',
     })
@@ -235,6 +239,24 @@ describe('POST /api/whatsapp/send — contact_id template path', () => {
 
     expect(conversationInserts).toHaveLength(0)
     expect(messageInserts[0]).toMatchObject({ conversation_id: 'conv-existing' })
+  })
+
+  it('renders and persists the template body when the caller omits content_text', async () => {
+    templateRow = {
+      id: 'template-1',
+      user_id: 'user-1',
+      name: 'order_update',
+      language: 'en_US',
+      body_text: 'Hello {{1}}, order {{2}} is ready.',
+    }
+
+    const res = await postContactTemplate({ content_text: undefined })
+
+    expect(res.status).toBe(200)
+    expect(messageInserts[0]).toMatchObject({
+      content_type: 'template',
+      content_text: 'Hello Acme, order #1234 is ready.',
+    })
   })
 
   it('404s when the contact is not in the caller account', async () => {

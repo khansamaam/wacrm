@@ -26,10 +26,12 @@ export function SettingsRail({
   active,
   onSelect,
   hints,
+  showWorkspace = true,
 }: {
   active: SettingsSection;
   onSelect: (section: SettingsSection) => void;
   hints?: Partial<Record<SettingsSection, ReactNode>>;
+  showWorkspace?: boolean;
 }) {
   const t = useTranslations('Settings');
   const activeRef = useRef<HTMLButtonElement>(null);
@@ -38,7 +40,8 @@ export function SettingsRail({
   // the rail is a static column, so skip.
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    if (window.matchMedia(`(min-width: ${RAIL_DESKTOP_MIN_PX}px)`).matches) return;
+    if (window.matchMedia(`(min-width: ${RAIL_DESKTOP_MIN_PX}px)`).matches)
+      return;
     activeRef.current?.scrollIntoView({
       inline: 'center',
       block: 'nearest',
@@ -50,14 +53,16 @@ export function SettingsRail({
     <nav
       aria-label="Settings sections"
       className={cn(
-        'flex gap-1 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
-        'border-b border-border',
-        'lg:sticky lg:top-0 lg:flex-col lg:overflow-visible lg:border-b-0 lg:pb-0',
+        'flex [scrollbar-width:none] gap-1 overflow-x-auto pb-2 [&::-webkit-scrollbar]:hidden',
+        'border-border border-b',
+        'lg:sticky lg:top-0 lg:flex-col lg:overflow-visible lg:border-b-0 lg:pb-0'
       )}
     >
-      {RAIL_GROUPS.map(({ label, group }) => {
+      {RAIL_GROUPS.filter(
+        ({ group }) => group !== 'workspace' || showWorkspace
+      ).map(({ label, group }) => {
         const items = SETTINGS_SECTIONS.filter(
-          (s) => SECTION_META[s].group === group,
+          (s) => SECTION_META[s].group === group
         );
         return (
           <div
@@ -65,7 +70,7 @@ export function SettingsRail({
             className="flex shrink-0 gap-1 lg:flex-col lg:gap-0.5"
           >
             {label ? (
-              <div className="hidden px-3 pt-3.5 pb-1.5 text-[11px] font-semibold tracking-[0.09em] text-muted-foreground uppercase lg:block">
+              <div className="text-muted-foreground hidden px-3 pt-3.5 pb-1.5 text-[11px] font-semibold tracking-[0.09em] uppercase lg:block">
                 {t(`groups.${group}`)}
               </div>
             ) : null}
@@ -85,7 +90,7 @@ export function SettingsRail({
                     'lg:w-full',
                     isActive
                       ? 'bg-primary-soft text-primary'
-                      : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                      : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                   )}
                 >
                   <Icon className="size-4 shrink-0" />
@@ -94,7 +99,7 @@ export function SettingsRail({
                     <span
                       className={cn(
                         'hidden items-center gap-1.5 text-xs lg:inline-flex',
-                        isActive ? 'text-primary' : 'text-muted-foreground',
+                        isActive ? 'text-primary' : 'text-muted-foreground'
                       )}
                     >
                       {hints[s]}
