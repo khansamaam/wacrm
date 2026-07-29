@@ -252,6 +252,10 @@ export interface Message {
   template_payload?: TemplateMessageSnapshot;
   message_id?: string;
   status: MessageStatus;
+  /** Meta delivery failure code supplied by a status webhook. */
+  delivery_error_code?: string | null;
+  /** Human-readable Meta delivery failure title/message/details. */
+  delivery_error_message?: string | null;
   created_at: string;
   reply_to_message_id?: string;
   /**

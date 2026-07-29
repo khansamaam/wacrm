@@ -5,6 +5,11 @@ import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 import { normalizePhone } from '@/lib/whatsapp/phone-utils'
 import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
+import {
+  deliveryErrorLabel,
+  parseMetaDeliveryError,
+  type MetaDeliveryError,
+} from '@/lib/whatsapp/delivery-error'
 import { runAutomationsForTrigger } from '@/lib/automations/engine'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
@@ -80,6 +85,7 @@ interface WhatsAppWebhookEntry {
         status: string
         timestamp: string
         recipient_id: string
+        errors?: MetaDeliveryError[]
       }>
     }
     field: string
@@ -354,7 +360,20 @@ async function handleStatusUpdate(status: {
   status: string
   timestamp: string
   recipient_id: string
+  errors?: MetaDeliveryError[]
 }) {
+  const deliveryError =
+    status.status === 'failed'
+      ? parseMetaDeliveryError(status.errors)
+      : null
+  const failureLabel =
+    status.status === 'failed' ? deliveryErrorLabel(deliveryError) : null
+  if (failureLabel) {
+    console.warn(
+      `[webhook] WhatsApp delivery failed for ${status.id}: ${failureLabel}`,
+    )
+  }
+
   // 1) Mirror onto messages (legacy behavior) — Meta's status values
   //    already match the CHECK constraint on messages.status. No
   //    `.select()`: message_id is NOT unique (migration 009 — Meta ids
@@ -362,7 +381,11 @@ async function handleStatusUpdate(status: {
   //    assume a single row.
   const { error: msgErr } = await supabaseAdmin()
     .from('messages')
-    .update({ status: status.status })
+    .update({
+      status: status.status,
+      delivery_error_code: deliveryError?.code ?? null,
+      delivery_error_message: failureLabel,
+    })
     .eq('message_id', status.id)
 
   if (msgErr) {
@@ -397,6 +420,7 @@ async function handleStatusUpdate(status: {
     if (status.status === 'sent' && !('sent_at' in update)) update.sent_at = tsIso
     if (status.status === 'delivered') update.delivered_at = tsIso
     if (status.status === 'read') update.read_at = tsIso
+    if (status.status === 'failed') update.error_message = failureLabel
 
     const { error: recUpdateErr } = await supabaseAdmin()
       .from('broadcast_recipients')
@@ -431,6 +455,8 @@ async function handleStatusUpdate(status: {
           whatsapp_message_id: status.id,
           conversation_id: msgRow.conversation_id,
           status: status.status,
+          delivery_error_code: deliveryError?.code ?? null,
+          delivery_error_message: failureLabel,
         }
       )
     }

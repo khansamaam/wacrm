@@ -33,7 +33,15 @@ interface MessageBubbleProps {
   onToggleReaction?: (emoji: string) => void;
 }
 
-function StatusIcon({ status }: { status: Message["status"] }) {
+function StatusIcon({
+  status,
+  errorCode,
+  errorMessage,
+}: {
+  status: Message["status"];
+  errorCode?: string | null;
+  errorMessage?: string | null;
+}) {
   switch (status) {
     case "sending":
       return <Clock className="h-3 w-3 text-muted-foreground" />;
@@ -43,8 +51,24 @@ function StatusIcon({ status }: { status: Message["status"] }) {
       return <CheckCheck className="h-3 w-3 text-muted-foreground" />;
     case "read":
       return <CheckCheck className="h-3 w-3 text-blue-400" />;
-    case "failed":
-      return <XCircle className="h-3 w-3 text-red-400" />;
+    case "failed": {
+      const detail = [
+        errorCode ? `[${errorCode}]` : null,
+        errorMessage || "Delivery failed",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      return (
+        <span
+          className="inline-flex cursor-help"
+          title={detail}
+          aria-label={detail}
+          tabIndex={0}
+        >
+          <XCircle className="h-3 w-3 text-red-400" />
+        </span>
+      );
+    }
     default:
       return null;
   }
@@ -449,7 +473,13 @@ export function MessageBubble({
           >
             {time}
           </span>
-          {isAgent && <StatusIcon status={message.status} />}
+          {isAgent && (
+            <StatusIcon
+              status={message.status}
+              errorCode={message.delivery_error_code}
+              errorMessage={message.delivery_error_message}
+            />
+          )}
         </div>
       </div>
       {reactions && reactions.length > 0 && onToggleReaction && (

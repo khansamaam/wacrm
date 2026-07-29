@@ -41,6 +41,8 @@ export interface ApiMessage {
   template_name: string | null;
   whatsapp_message_id: string | null;
   status: string;
+  delivery_error_code: string | null;
+  delivery_error_message: string | null;
   reply_to_message_id: string | null;
   interactive_reply_id: string | null;
   created_at: string;
@@ -93,6 +95,8 @@ export function serializeMessage(m: Message): ApiMessage {
     template_name: m.template_name ?? null,
     whatsapp_message_id: m.message_id ?? null,
     status: m.status,
+    delivery_error_code: m.delivery_error_code ?? null,
+    delivery_error_message: m.delivery_error_message ?? null,
     reply_to_message_id: m.reply_to_message_id ?? null,
     interactive_reply_id: m.interactive_reply_id ?? null,
     created_at: m.created_at,
