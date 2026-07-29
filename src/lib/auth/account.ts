@@ -116,7 +116,7 @@ export async function getCurrentAccount(): Promise<AccountContext> {
 
   const { data, error } = await supabase
     .from("profiles")
-    .select("account_id, account_role")
+    .select("account_id, account_role, access_status")
     .eq("user_id", user.id)
     .maybeSingle();
 
@@ -129,6 +129,9 @@ export async function getCurrentAccount(): Promise<AccountContext> {
     // signup trigger. The user is authenticated but the app has
     // no way to scope their queries — treat as forbidden.
     throw new ForbiddenError("Profile is not linked to an account");
+  }
+  if (data.access_status && data.access_status !== "active") {
+    throw new ForbiddenError("Workspace access is not active");
   }
   if (!isAccountRole(data.account_role)) {
     // The DB enum should make this impossible, but a future
@@ -186,5 +189,31 @@ export async function requireRole(min: AccountRole): Promise<AccountContext> {
       `This action requires the '${min}' role or higher`,
     );
   }
+  return ctx;
+}
+
+/**
+ * Require the caller to be a platform Super Admin.
+ *
+ * Platform administration is deliberately separate from workspace roles:
+ * being a workspace Owner/Admin never grants access to platform-controlled
+ * operations such as changing WhatsApp credentials.
+ */
+export async function requirePlatformAdmin(): Promise<AccountContext> {
+  const ctx = await getCurrentAccount();
+  const { data, error } = await ctx.supabase
+    .from("platform_admins")
+    .select("user_id")
+    .eq("user_id", ctx.userId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[requirePlatformAdmin] lookup error:", error);
+    throw new ForbiddenError("Could not verify platform access");
+  }
+  if (!data) {
+    throw new ForbiddenError("This action requires Platform Super Admin access");
+  }
+
   return ctx;
 }

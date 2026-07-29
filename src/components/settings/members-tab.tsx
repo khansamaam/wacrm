@@ -89,13 +89,13 @@ interface Invitation {
   id: string;
   role: 'admin' | 'agent' | 'viewer';
   label: string | null;
+  invitee_email: string | null;
   created_at: string;
   expires_at: string;
 }
 
 // These roles are translated via `useTranslations("Settings.roles")` where they are used.
 const EDITABLE_ROLES: { value: AccountRole }[] = [
-  { value: 'admin' },
   { value: 'agent' },
   { value: 'viewer' },
 ];
@@ -523,7 +523,7 @@ export function MembersTab() {
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-medium text-foreground">
-                            {inv.label || t('untitledInvite')}
+                            {inv.label || inv.invitee_email || t('untitledInvite')}
                           </span>
                           <span
                             className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium ${inviteRoleMeta.className}`}
@@ -533,6 +533,7 @@ export function MembersTab() {
                           </span>
                         </div>
                         <p className="mt-0.5 text-xs text-muted-foreground">
+                          {inv.invitee_email ? `${inv.invitee_email} · ` : ''}
                           {t('created', { date: fmtDate(inv.created_at) })} · {fmtExpiresIn(inv.expires_at, t)}
                         </p>
                       </div>

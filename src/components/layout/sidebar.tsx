@@ -11,6 +11,7 @@ import { BrandLogo } from '@/components/brand-logo';
 import {
   Bell,
   Bot,
+  Building2,
   Crown,
   GitBranch,
   LayoutDashboard,
@@ -149,6 +150,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
     accountRole,
     canEditSettings,
     canAccessModule,
+    isSuperAdmin,
     signOut,
   } = useAuth();
   const totalUnread = useTotalUnread();
@@ -310,6 +312,22 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
           <div className="border-border my-4 border-t" />
 
           <ul className="flex flex-col gap-1">
+            {isSuperAdmin ? (
+              <li>
+                <Link
+                  href="/platform"
+                  className={cn(
+                    'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors lg:py-2',
+                    pathname.startsWith('/platform')
+                      ? 'bg-primary/10 text-primary'
+                      : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                  )}
+                >
+                  <Building2 className="h-4 w-4" />
+                  {t('platform')}
+                </Link>
+              </li>
+            ) : null}
             {bottomNavItems.map((item) => {
               const isActive = pathname.startsWith(item.href);
               return (

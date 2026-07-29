@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
-import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { requirePlatformAdmin, toErrorResponse } from '@/lib/auth/account'
 import {
   registerPhoneNumber,
   subscribeWabaToApp,
@@ -170,11 +170,35 @@ export async function POST(request: Request) {
     // protects the final database write, but that check happens too late:
     // /register and subscribed_apps can change external Meta state before
     // an under-privileged write is rejected.
-    const ctx = await requireRole('admin')
-    const { supabase, accountId, userId } = ctx
+    const ctx = await requirePlatformAdmin()
+    const { accountId: currentAccountId, userId } = ctx
 
     const body = await request.json()
-    const { phone_number_id, waba_id, access_token, verify_token, pin } = body
+    const {
+      account_id,
+      phone_number_id,
+      waba_id,
+      access_token,
+      verify_token,
+      pin,
+    } = body
+    const accountId =
+      typeof account_id === 'string' && account_id.trim()
+        ? account_id.trim()
+        : currentAccountId
+    const db = supabaseAdmin()
+
+    const { data: targetAccount, error: targetAccountError } = await db
+      .from('accounts')
+      .select('id')
+      .eq('id', accountId)
+      .maybeSingle()
+    if (targetAccountError || !targetAccount) {
+      return NextResponse.json(
+        { error: 'Target workspace was not found' },
+        { status: 404 }
+      )
+    }
 
     if (!access_token || !phone_number_id) {
       return NextResponse.json(
@@ -261,7 +285,7 @@ export async function POST(request: Request) {
     // Look up any pre-existing row for this account so we know whether
     // this number is already registered with Meta — if so we can skip
     // /register when the user didn't provide a PIN this time around.
-    const { data: existing } = await supabase
+    const { data: existing } = await db
       .from('whatsapp_config')
       .select('id, registered_at, phone_number_id')
       .eq('account_id', accountId)
@@ -356,7 +380,7 @@ export async function POST(request: Request) {
     }
 
     if (existing) {
-      const { error: updateError } = await supabase
+      const { error: updateError } = await db
         .from('whatsapp_config')
         .update(baseRow)
         .eq('account_id', accountId)
@@ -373,7 +397,7 @@ export async function POST(request: Request) {
       // (NOT NULL post-017, UNIQUE so duplicates trip the constraint
       // up-front), `user_id` is the audit column identifying which
       // member of the account saved the config.
-      const { error: insertError } = await supabase
+      const { error: insertError } = await db
         .from('whatsapp_config')
         .insert({
           account_id: accountId,
@@ -426,13 +450,15 @@ export async function POST(request: Request) {
  * Used by the "Reset Configuration" button to recover from a corrupted
  * encrypted token (mismatched ENCRYPTION_KEY across environments).
  */
-export async function DELETE() {
+export async function DELETE(request: Request) {
   try {
-    // Resetting a shared connection is an account-wide settings change.
-    // Enforce admin+ here as well as in RLS so callers receive a clear 403.
-    const { supabase, accountId } = await requireRole('admin')
+    // WhatsApp credentials are platform-managed. Workspace roles may inspect
+    // connection health, but cannot replace or disconnect the integration.
+    const ctx = await requirePlatformAdmin()
+    const requestedAccountId = new URL(request.url).searchParams.get('accountId')
+    const accountId = requestedAccountId?.trim() || ctx.accountId
 
-    const { error: deleteError } = await supabase
+    const { error: deleteError } = await supabaseAdmin()
       .from('whatsapp_config')
       .delete()
       .eq('account_id', accountId)

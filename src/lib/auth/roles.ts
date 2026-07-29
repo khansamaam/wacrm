@@ -66,9 +66,9 @@ export function isAccountRole(value: unknown): value is AccountRole {
 // = one new predicate here + one call site change per consumer.
 // ============================================================
 
-/** Owner / admin: invite, remove, change roles. */
+/** Client Admin (stored as owner): invite, remove, and change members. */
 export function canManageMembers(role: AccountRole): boolean {
-  return hasMinRole(role, "admin");
+  return role === "owner";
 }
 
 /**
@@ -77,7 +77,7 @@ export function canManageMembers(role: AccountRole): boolean {
  * name). Excludes per-user settings like avatar or own password.
  */
 export function canEditSettings(role: AccountRole): boolean {
-  return hasMinRole(role, "admin");
+  return role === "owner";
 }
 
 /**

@@ -259,27 +259,19 @@ export default function JoinPage() {
               >
                 Try again
               </Button>
-              <Link href="/signup">
-                <Button
-                  variant="outline"
-                  className="w-full border-border text-muted-foreground hover:bg-muted hover:text-foreground"
-                >
-                  Create a new account instead
-                </Button>
-              </Link>
-            </>
-          ) : (
-            <>
-              <Link href="/signup">
-                <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
-                  Create a new account instead
-                </Button>
-              </Link>
               <Link href="/login">
                 <Button
                   variant="outline"
                   className="w-full border-border text-muted-foreground hover:bg-muted hover:text-foreground"
                 >
+                  Sign in
+                </Button>
+              </Link>
+            </>
+          ) : (
+            <>
+              <Link href="/login">
+                <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
                   Sign in
                 </Button>
               </Link>
@@ -371,11 +363,13 @@ export default function JoinPage() {
             </DialogHeader>
             <div className="space-y-2 py-2 text-xs text-muted-foreground">
               <p>
-                To join{' '}
-                <span className="text-popover-foreground">{peek.account_name}</span>,
-                sign out and sign up again with a different email address.
-                The invite link stays valid as long as it hasn&apos;t
-                expired.
+                This login already belongs to an active workspace. Ask your
+                Platform Super Admin to remove that access before inviting
+                the same email to{' '}
+                <span className="text-popover-foreground">
+                  {peek.account_name}
+                </span>
+                .
               </p>
             </div>
             <DialogFooter className="bg-popover border-border">
@@ -397,7 +391,7 @@ export default function JoinPage() {
                     Signing out…
                   </>
                 ) : (
-                  'Sign out & use a different email'
+                  'Sign out'
                 )}
               </Button>
             </DialogFooter>
@@ -412,19 +406,15 @@ export default function JoinPage() {
     <Card className="w-full max-w-md border-border bg-card">
       {inviteHeader}
       <CardContent className="flex flex-col gap-2">
-        <Link href={`/signup?invite=${encodeURIComponent(token!)}`}>
-          <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
-            Create account &amp; join
-          </Button>
-        </Link>
         <Link href={`/login?invite=${encodeURIComponent(token!)}`}>
-          <Button
-            variant="outline"
-            className="w-full border-border text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            I already have an account
+          <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
+            Sign in to accept
           </Button>
         </Link>
+        <p className="pt-1 text-center text-xs text-muted-foreground">
+          New users must open the Supabase invitation email first. It signs
+          you in securely and returns you to this invitation.
+        </p>
       </CardContent>
     </Card>
   );
