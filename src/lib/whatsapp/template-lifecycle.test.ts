@@ -79,6 +79,36 @@ describe('submitMessageTemplate', () => {
     ).rejects.toThrow(/Rate limit/);
   });
 
+  it('preserves Meta validation details and identifiers', async () => {
+    fetchMock.mockResolvedValueOnce(
+      errorResponse(400, {
+        error: {
+          message: 'Invalid parameter',
+          code: 100,
+          error_subcode: 2388024,
+          error_user_title: 'Invalid button URL',
+          error_user_msg: 'Provide a named query parameter.',
+          error_data: { details: 'Use ?ref={{1}} instead of ?{{1}}.' },
+          fbtrace_id: 'TRACE123',
+        },
+      }),
+    );
+    await expect(
+      submitMessageTemplate({
+        wabaId: 'W',
+        accessToken: 't',
+        payload: {
+          name: 'n',
+          category: 'MARKETING',
+          language: 'en_US',
+          components: [],
+        },
+      }),
+    ).rejects.toThrow(
+      /Invalid button URL.*Provide a named query parameter.*Use \?ref=\{\{1\}\}.*code 100.*subcode 2388024.*TRACE123/,
+    );
+  });
+
   it('throws if Meta accepts but returns no id (data integrity guard)', async () => {
     fetchMock.mockResolvedValueOnce(okResponse({ status: 'PENDING' }));
     await expect(
