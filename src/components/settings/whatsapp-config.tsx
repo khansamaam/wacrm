@@ -44,7 +44,13 @@ export function WhatsAppConfig() {
   // context and key every read off it — so a teammate who just
   // joined an account sees the inviter's saved config without
   // having to re-enter anything.
-  const { user, accountId, loading: authLoading, profileLoading } = useAuth();
+  const {
+    user,
+    accountId,
+    loading: authLoading,
+    profileLoading,
+    canEditSettings,
+  } = useAuth();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -180,9 +186,13 @@ export function WhatsAppConfig() {
     if (loadedAccountIdRef.current === accountId) return;
     loadedAccountIdRef.current = accountId;
     fetchConfig(accountId);
-  }, [authLoading, profileLoading, user?.id, accountId, fetchConfig]);
+  }, [authLoading, profileLoading, user, accountId, fetchConfig]);
 
   async function handleSave() {
+    if (!canEditSettings) {
+      toast.error(t('adminOnly'));
+      return;
+    }
     if (!phoneNumberId.trim()) {
       toast.error('Phone Number ID is required');
       return;
@@ -334,6 +344,10 @@ export function WhatsAppConfig() {
   }
 
   async function handleReset() {
+    if (!canEditSettings) {
+      toast.error(t('adminOnly'));
+      return;
+    }
     if (!confirm('This will delete the current WhatsApp config so you can re-enter it. Continue?')) {
       return;
     }
@@ -393,6 +407,15 @@ export function WhatsAppConfig() {
         title={t("title")}
         description={t("description")}
       />
+      {!canEditSettings && (
+        <Alert className="mb-6 border-primary/30 bg-primary-soft">
+          <AlertTriangle className="size-4 text-primary" />
+          <AlertTitle className="text-foreground">{t('readOnlyTitle')}</AlertTitle>
+          <AlertDescription className="text-muted-foreground">
+            {t('readOnlyDescription')}
+          </AlertDescription>
+        </Alert>
+      )}
       <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
       {/* Main config form */}
       <div className="space-y-6">
@@ -408,24 +431,26 @@ export function WhatsAppConfig() {
                 <AlertDescription className="text-amber-100/80 text-sm">
                   {statusMessage}
                 </AlertDescription>
-                <Button
-                  onClick={handleReset}
-                  disabled={resetting}
-                  size="sm"
-                  className="mt-3 bg-amber-600 hover:bg-amber-700 text-white"
-                >
-                  {resetting ? (
-                    <>
-                      <Loader2 className="size-4 animate-spin" />
-                      {t('resetting')}
-                    </>
-                  ) : (
-                    <>
-                      <RotateCcw className="size-4" />
-                      {t('resetConfig')}
-                    </>
-                  )}
-                </Button>
+                {canEditSettings && (
+                  <Button
+                    onClick={handleReset}
+                    disabled={resetting}
+                    size="sm"
+                    className="mt-3 bg-amber-600 hover:bg-amber-700 text-white"
+                  >
+                    {resetting ? (
+                      <>
+                        <Loader2 className="size-4 animate-spin" />
+                        {t('resetting')}
+                      </>
+                    ) : (
+                      <>
+                        <RotateCcw className="size-4" />
+                        {t('resetConfig')}
+                      </>
+                    )}
+                  </Button>
+                )}
               </div>
             </div>
           </Alert>
@@ -569,6 +594,7 @@ export function WhatsAppConfig() {
                 placeholder="e.g. 100234567890123"
                 value={phoneNumberId}
                 onChange={(e) => setPhoneNumberId(e.target.value)}
+                readOnly={!canEditSettings}
                 className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
               />
             </div>
@@ -579,6 +605,7 @@ export function WhatsAppConfig() {
                 placeholder="e.g. 100234567890456"
                 value={wabaId}
                 onChange={(e) => setWabaId(e.target.value)}
+                readOnly={!canEditSettings}
                 className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
               />
             </div>
@@ -590,12 +617,13 @@ export function WhatsAppConfig() {
                   type={showToken ? 'text' : 'password'}
                   placeholder={t('accessTokenPlaceholder')}
                   value={accessToken}
+                  readOnly={!canEditSettings}
                   onChange={(e) => {
                     setAccessToken(e.target.value);
                     setTokenEdited(true);
                   }}
                   onFocus={() => {
-                    if (accessToken === MASKED_TOKEN) {
+                    if (canEditSettings && accessToken === MASKED_TOKEN) {
                       setAccessToken('');
                       setTokenEdited(true);
                     }
@@ -605,7 +633,8 @@ export function WhatsAppConfig() {
                 <button
                   type="button"
                   onClick={() => setShowToken(!showToken)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  disabled={!canEditSettings}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {showToken ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                 </button>
@@ -623,6 +652,7 @@ export function WhatsAppConfig() {
                 placeholder={t('webhookVerifyTokenPlaceholder')}
                 value={verifyToken}
                 onChange={(e) => setVerifyToken(e.target.value)}
+                readOnly={!canEditSettings}
                 className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
               />
               <p className="text-xs text-muted-foreground">
@@ -641,6 +671,7 @@ export function WhatsAppConfig() {
                 maxLength={6}
                 placeholder={t('pinPlaceholder')}
                 value={pin}
+                readOnly={!canEditSettings}
                 onChange={(e) =>
                   setPin(e.target.value.replace(/\D/g, '').slice(0, 6))
                 }
@@ -685,20 +716,22 @@ export function WhatsAppConfig() {
 
         {/* Action Buttons */}
         <div className="flex flex-wrap gap-3">
-          <Button
-            onClick={handleSave}
-            disabled={saving}
-            className="bg-primary hover:bg-primary/90 text-primary-foreground"
-          >
-            {saving ? (
-              <>
-                <Loader2 className="size-4 animate-spin" />
-                {t('saving')}
-              </>
-            ) : (
-              t('saveConfig')
-            )}
-          </Button>
+          {canEditSettings && (
+            <Button
+              onClick={handleSave}
+              disabled={saving}
+              className="bg-primary hover:bg-primary/90 text-primary-foreground"
+            >
+              {saving ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  {t('saving')}
+                </>
+              ) : (
+                t('saveConfig')
+              )}
+            </Button>
+          )}
           <Button
             variant="outline"
             onClick={handleTestConnection}
@@ -717,7 +750,7 @@ export function WhatsAppConfig() {
               </>
             )}
           </Button>
-          {config && (
+          {config && canEditSettings && (
             <Button
               variant="outline"
               onClick={handleReset}
@@ -794,9 +827,27 @@ export function WhatsAppConfig() {
                 <AccordionContent className="text-muted-foreground">
                   <ol className="list-decimal list-inside space-y-1 text-sm">
                     <li>{t('step3_1')}</li>
-                    <li dangerouslySetInnerHTML={{ __html: t('step3_2') }} />
-                    <li dangerouslySetInnerHTML={{ __html: t('step3_3') }} />
-                    <li dangerouslySetInnerHTML={{ __html: t('step3_4') }} />
+                    <li>
+                      {t.rich('step3_2', {
+                        strong: (chunks) => (
+                          <strong className="text-foreground">{chunks}</strong>
+                        ),
+                      })}
+                    </li>
+                    <li>
+                      {t.rich('step3_3', {
+                        strong: (chunks) => (
+                          <strong className="text-foreground">{chunks}</strong>
+                        ),
+                      })}
+                    </li>
+                    <li>
+                      {t.rich('step3_4', {
+                        strong: (chunks) => (
+                          <strong className="text-foreground">{chunks}</strong>
+                        ),
+                      })}
+                    </li>
                   </ol>
                 </AccordionContent>
               </AccordionItem>
@@ -812,8 +863,20 @@ export function WhatsAppConfig() {
                   <ol className="list-decimal list-inside space-y-1 text-sm">
                     <li>{t('step4_1')}</li>
                     <li>{t('step4_2')}</li>
-                    <li dangerouslySetInnerHTML={{ __html: t('step4_3') }} />
-                    <li dangerouslySetInnerHTML={{ __html: t('step4_4') }} />
+                    <li>
+                      {t.rich('step4_3', {
+                        strong: (chunks) => (
+                          <strong className="text-foreground">{chunks}</strong>
+                        ),
+                      })}
+                    </li>
+                    <li>
+                      {t.rich('step4_4', {
+                        strong: (chunks) => (
+                          <strong className="text-foreground">{chunks}</strong>
+                        ),
+                      })}
+                    </li>
                     <li>{t('step4_5')}</li>
                   </ol>
                 </AccordionContent>
