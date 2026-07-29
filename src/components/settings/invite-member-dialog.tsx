@@ -39,7 +39,7 @@ import {
 import { useTranslations } from 'next-intl';
 import { useAuth } from '@/hooks/use-auth';
 
-type InviteRole = 'agent' | 'viewer';
+type InviteRole = 'admin' | 'agent' | 'viewer';
 
 interface InviteMemberDialogProps {
   open: boolean;
@@ -62,8 +62,6 @@ const MAX_LABEL_LEN = 80;
 
 interface CreatedInvite {
   url: string;
-  email: string;
-  emailSent: boolean;
   role: InviteRole;
   expiresInDays: number;
   /** Snapshotted at creation time so a later account rename can't
@@ -79,7 +77,6 @@ export function InviteMemberDialog({
   const t = useTranslations('Settings.invite');
   const tRoles = useTranslations('Settings.roles');
   const { account } = useAuth();
-  const [email, setEmail] = useState('');
   const [role, setRole] = useState<InviteRole>('agent');
   const [expiry, setExpiry] = useState<string>('7');
   const [label, setLabel] = useState('');
@@ -88,7 +85,6 @@ export function InviteMemberDialog({
 
   function reset() {
     setRole('agent');
-    setEmail('');
     setExpiry('7');
     setLabel('');
     setResult(null);
@@ -103,11 +99,6 @@ export function InviteMemberDialog({
     // the limit kicks in on the next keystroke — this is the safety
     // net for that path.
     const trimmedLabel = label.trim();
-    const normalizedEmail = email.trim().toLowerCase();
-    if (!normalizedEmail) {
-      toast.error(t('emailRequired'));
-      return;
-    }
     if (trimmedLabel.length > MAX_LABEL_LEN) {
       toast.error(t('labelTooLong', { max: MAX_LABEL_LEN }));
       return;
@@ -118,7 +109,6 @@ export function InviteMemberDialog({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: normalizedEmail,
           role,
           expiresInDays: Number(expiry),
           label: trimmedLabel || undefined,
@@ -133,15 +123,11 @@ export function InviteMemberDialog({
 
       const data = (await res.json()) as {
         url: string;
-        email: string;
-        emailSent: boolean;
         expiresInDays: number;
       };
 
       setResult({
         url: data.url,
-        email: data.email,
-        emailSent: data.emailSent,
         role,
         expiresInDays: data.expiresInDays,
         // Snapshot the account name into the result so the wa.me
@@ -212,11 +198,6 @@ export function InviteMemberDialog({
             </DialogHeader>
 
             <div className="space-y-3 py-2">
-              <div className="rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-xs text-muted-foreground">
-                {result.emailSent
-                  ? t('emailSent', { email: result.email })
-                  : t('existingLogin', { email: result.email })}
-              </div>
               <Label className="text-muted-foreground">{t('inviteLink')}</Label>
               <div className="flex gap-2">
                 <Input
@@ -287,25 +268,6 @@ export function InviteMemberDialog({
 
             <div className="space-y-4 py-2">
               <div className="space-y-2">
-                <Label htmlFor="invite-email" className="text-muted-foreground">
-                  {t('emailLabel')}
-                </Label>
-                <Input
-                  id="invite-email"
-                  type="email"
-                  placeholder={t('emailPlaceholder')}
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  autoComplete="email"
-                  required
-                  className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
-                />
-                <p className="text-xs text-muted-foreground">
-                  {t('emailHint')}
-                </p>
-              </div>
-
-              <div className="space-y-2">
                 <Label className="text-muted-foreground">{t('roleLabel')}</Label>
                 <Select
                   value={role}
@@ -315,12 +277,13 @@ export function InviteMemberDialog({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="admin">{tRoles('admin')}</SelectItem>
                     <SelectItem value="agent">{tRoles('agent')}</SelectItem>
                     <SelectItem value="viewer">{tRoles('viewer')}</SelectItem>
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  {tRoles(`${role}Hint` as 'agentHint' | 'viewerHint')}
+                  {tRoles(`${role}Hint` as 'adminHint' | 'agentHint' | 'viewerHint')}
                 </p>
               </div>
 
@@ -371,7 +334,7 @@ export function InviteMemberDialog({
               </Button>
               <Button
                 onClick={handleCreate}
-                disabled={submitting || !email.trim()}
+                disabled={submitting}
                 className="bg-primary hover:bg-primary/90 text-primary-foreground"
               >
                 {submitting ? (

@@ -86,16 +86,16 @@ describe("isAccountRole", () => {
 });
 
 describe("capability predicates", () => {
-  it("canManageMembers: Client Admin only", () => {
+  it("canManageMembers: admin+ only", () => {
     expect(canManageMembers("owner")).toBe(true);
-    expect(canManageMembers("admin")).toBe(false);
+    expect(canManageMembers("admin")).toBe(true);
     expect(canManageMembers("agent")).toBe(false);
     expect(canManageMembers("viewer")).toBe(false);
   });
 
-  it("canEditSettings: Client Admin only", () => {
+  it("canEditSettings: admin+ only", () => {
     expect(canEditSettings("owner")).toBe(true);
-    expect(canEditSettings("admin")).toBe(false);
+    expect(canEditSettings("admin")).toBe(true);
     expect(canEditSettings("agent")).toBe(false);
     expect(canEditSettings("viewer")).toBe(false);
   });

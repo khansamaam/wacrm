@@ -47,7 +47,7 @@ export async function PATCH(
   { params }: { params: Promise<{ userId: string }> },
 ) {
   try {
-    const ctx = await requireRole("owner");
+    const ctx = await requireRole("admin");
 
     const limit = checkRateLimit(
       `admin:memberRole:${ctx.userId}`,
@@ -62,9 +62,21 @@ export async function PATCH(
       | null;
     const role = body?.role;
 
-    if (!isAccountRole(role) || !["agent", "viewer"].includes(role)) {
+    if (!isAccountRole(role)) {
       return NextResponse.json(
-        { error: "'role' must be either agent or viewer" },
+        { error: "'role' must be one of owner, admin, agent, viewer" },
+        { status: 400 },
+      );
+    }
+
+    // The RPC blocks promotion to / demotion from owner, but
+    // surface the friendlier 400 before crossing the wire too.
+    if (role === "owner") {
+      return NextResponse.json(
+        {
+          error:
+            "Use POST /api/account/transfer-ownership to promote a member to owner",
+        },
         { status: 400 },
       );
     }
@@ -87,7 +99,7 @@ export async function DELETE(
   { params }: { params: Promise<{ userId: string }> },
 ) {
   try {
-    const ctx = await requireRole("owner");
+    const ctx = await requireRole("admin");
 
     const limit = checkRateLimit(
       `admin:memberRemove:${ctx.userId}`,
@@ -103,7 +115,7 @@ export async function DELETE(
 
     if (error) return rpcErrorToResponse(error);
 
-    return NextResponse.json({ ok: true, accountId: data });
+    return NextResponse.json({ ok: true, newPersonalAccountId: data });
   } catch (err) {
     return toErrorResponse(err);
   }

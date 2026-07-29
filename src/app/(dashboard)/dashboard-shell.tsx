@@ -17,7 +17,6 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
     user,
     loading,
     profileLoading,
-    profile,
     accountRole,
     moduleAccess,
     canAccessModule,
@@ -25,7 +24,6 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const routeModule = moduleForPath(pathname);
-  const accessStatus = profile?.access_status ?? null;
   const routeDenied =
     !profileLoading &&
     !!accountRole &&
@@ -60,25 +58,6 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
   }
 
   if (!user) return null;
-
-  if (accessStatus && accessStatus !== 'active') {
-    return (
-      <div className="bg-background flex h-screen items-center justify-center px-4">
-        <div className="border-border bg-card w-full max-w-md rounded-xl border p-6 text-center">
-          <h1 className="text-foreground text-xl font-semibold">
-            {accessStatus === 'pending'
-              ? 'Invitation acceptance required'
-              : 'Workspace access removed'}
-          </h1>
-          <p className="text-muted-foreground mt-2 text-sm">
-            {accessStatus === 'pending'
-              ? 'Return to your invitation link and accept it before opening the workspace.'
-              : 'Contact your Client Admin if you need a new workspace invitation.'}
-          </p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="bg-background flex h-screen overflow-hidden">

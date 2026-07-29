@@ -42,7 +42,6 @@ interface Profile {
   beta_features: string[];
   account_id: string | null;
   account_role: AccountRole | null;
-  access_status: 'active' | 'pending' | 'removed';
 }
 
 interface AccountSummary {
@@ -110,10 +109,6 @@ interface AuthContextValue {
   canManageMembers: boolean;
   /** True if the caller can edit account-wide settings (admin+). */
   canEditSettings: boolean;
-  /** Platform-level authority, independent of the workspace role. */
-  isSuperAdmin: boolean;
-  /** Only the platform Super Admin may change WhatsApp credentials. */
-  canManageWhatsApp: boolean;
   /** True if the caller can send messages and edit operational data (agent+). */
   canSendMessages: boolean;
   /** Normalized account-level module visibility configuration. */
@@ -133,7 +128,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [account, setAccount] = useState<AccountSummary | null>(null);
-  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   // Tracked separately from `loading`. The session settles fast (one
   // local cookie read); the profile fetch crosses the network and
@@ -157,7 +151,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data, error } = await supabase
         .from('profiles')
         .select(
-          'id, full_name, email, avatar_url, role, beta_features, account_id, account_role, access_status'
+          'id, full_name, email, avatar_url, role, beta_features, account_id, account_role'
         )
         .eq('user_id', userId)
         .maybeSingle();
@@ -170,26 +164,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           code: error.code,
         });
         lastFetchedUserIdRef.current = null;
-        setIsSuperAdmin(false);
         return;
       }
 
       if (data) {
-        const { data: platformAdmin, error: platformAdminError } = await supabase
-          .from('platform_admins')
-          .select('user_id')
-          .eq('user_id', userId)
-          .maybeSingle();
-        if (platformAdminError) {
-          // Migration 041 may not be installed yet during a rolling deploy.
-          // Fail closed without blanking the ordinary workspace profile.
-          console.warn(
-            '[AuthProvider] platform role unavailable; using workspace-only access:',
-            platformAdminError.message
-          );
-        }
-        setIsSuperAdmin(Boolean(platformAdmin));
-
         // Load the account with a plain lookup by id instead of an
         // embedded FK join. The embed (`account:accounts!inner(...)`)
         // forces PostgREST to resolve the profiles.account_id →
@@ -267,15 +245,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           beta_features: data.beta_features ?? [],
           account_id: data.account_id ?? null,
           account_role: accountRole,
-          access_status:
-            data.access_status === 'pending' || data.access_status === 'removed'
-              ? data.access_status
-              : 'active',
         });
         setAccount(accountRow);
       } else {
         lastFetchedUserIdRef.current = null;
-        setIsSuperAdmin(false);
       }
     } catch (err) {
       console.error('[AuthProvider] fetchProfile threw:', err);
@@ -348,7 +321,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         lastFetchedUserIdRef.current = null;
         setProfile(null);
         setAccount(null);
-        setIsSuperAdmin(false);
         setProfileLoading(false);
       }
 
@@ -391,8 +363,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isViewer: role === 'viewer',
       canManageMembers: role ? canManageMembersFor(role) : false,
       canEditSettings: role ? canEditSettingsFor(role) : false,
-      isSuperAdmin,
-      canManageWhatsApp: isSuperAdmin,
       canSendMessages: role ? canSendMessagesFor(role) : false,
       moduleAccess: account?.moduleAccess ?? DEFAULT_MODULE_ACCESS,
       canAccessModule: (module: AppModule) =>
@@ -400,12 +370,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           ? canAccessModuleFor(role, module, account.moduleAccess)
           : false,
     };
-  }, [
-    profile?.account_role,
-    profile?.account_id,
-    account?.moduleAccess,
-    isSuperAdmin,
-  ]);
+  }, [profile?.account_role, profile?.account_id, account?.moduleAccess]);
 
   return (
     <AuthContext.Provider
@@ -456,8 +421,6 @@ export function useAuth(): AuthContextValue {
       isViewer: false,
       canManageMembers: false,
       canEditSettings: false,
-      isSuperAdmin: false,
-      canManageWhatsApp: false,
       canSendMessages: false,
       moduleAccess: DEFAULT_MODULE_ACCESS,
       canAccessModule: () => false,
