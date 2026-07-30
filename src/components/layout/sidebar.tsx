@@ -147,6 +147,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
     profileLoading,
     account,
     accountRole,
+    isOwner,
     canEditSettings,
     canAccessModule,
     signOut,
@@ -415,9 +416,11 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                 render={
                   <Link
                     href={
-                      canEditSettings
+                      isOwner
                         ? '/settings?tab=whatsapp'
-                        : '/settings?tab=profile'
+                        : canEditSettings
+                          ? '/settings?tab=overview'
+                          : '/settings?tab=profile'
                     }
                     onClick={onClose}
                     className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"

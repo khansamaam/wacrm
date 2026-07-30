@@ -44,7 +44,7 @@ import { useTranslations } from "next-intl";
 export function Header({ onOpenSidebar }: HeaderProps) {
   const t = useTranslations("Header");
   const pathname = usePathname();
-  const { profile, canEditSettings, signOut } = useAuth();
+  const { profile, canEditSettings, isOwner, signOut } = useAuth();
   const titleKey = getPageTitleKey(pathname);
 
   const initial =
@@ -121,9 +121,11 @@ export function Header({ onOpenSidebar }: HeaderProps) {
               render={
                 <Link
                   href={
-                    canEditSettings
+                    isOwner
                       ? "/settings?tab=whatsapp"
-                      : "/settings?tab=profile"
+                      : canEditSettings
+                        ? "/settings?tab=overview"
+                        : "/settings?tab=profile"
                   }
                   className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
                 />

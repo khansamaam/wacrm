@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import {
@@ -8,29 +7,6 @@ import {
   verifyPhoneNumber,
 } from '@/lib/whatsapp/meta-api'
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
-
-/**
- * Resolve the caller's account_id from their profile. Inlined here
- * (rather than going through `@/lib/auth/account.getCurrentAccount`)
- * because the GET handler wants to return shaped 200s for every
- * non-auth failure mode, not throw — keeping the helper minimal lets
- * the existing response branches stay as-is.
- *
- * Returns null if the user has no profile or no account; callers
- * should treat that the same as "not connected".
- */
-async function resolveAccountId(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  userId: string,
-): Promise<string | null> {
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('account_id')
-    .eq('user_id', userId)
-    .maybeSingle()
-  if (error || !data?.account_id) return null
-  return data.account_id as string
-}
 
 // Lazy-initialised service-role client. We need it to detect a
 // phone_number_id already claimed by a *different* user — under RLS,
@@ -52,8 +28,9 @@ function supabaseAdmin() {
  * GET /api/whatsapp/config
  *
  * Used by the "Test API Connection" button and by the page to check
- * whether the saved config is healthy. Returns 200 in all non-auth cases
- * so the UI can render an appropriate message rather than show a 500.
+ * whether the saved config is healthy. Workspace Owner authorization is
+ * required; connection-state failures return 200 so the UI can render an
+ * appropriate message rather than show a generic 500.
  *
  * Response shape:
  *   { connected: true,  phone_info: {...} }
@@ -63,28 +40,7 @@ function supabaseAdmin() {
  */
 export async function GET() {
   try {
-    const supabase = await createClient()
-
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser()
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const accountId = await resolveAccountId(supabase, user.id)
-    if (!accountId) {
-      return NextResponse.json(
-        {
-          connected: false,
-          reason: 'no_account',
-          message: 'Your profile is not linked to an account.',
-        },
-        { status: 200 },
-      )
-    }
+    const { supabase, accountId } = await requireRole('owner')
 
     const { data: config, error: configError } = await supabase
       .from('whatsapp_config')
@@ -150,19 +106,15 @@ export async function GET() {
       )
     }
   } catch (error) {
-    console.error('Error in WhatsApp config GET:', error)
-    return NextResponse.json(
-      { connected: false, reason: 'unknown', message: 'Internal server error' },
-      { status: 500 }
-    )
+    return toErrorResponse(error)
   }
 }
 
 /**
  * POST /api/whatsapp/config
  *
- * Saves or updates the WhatsApp config for the authenticated user.
- * Verifies credentials with Meta first, then encrypts and stores.
+ * Saves or updates the workspace WhatsApp config. Only the Workspace Owner
+ * may call this endpoint. Credentials are verified with Meta before storage.
  */
 export async function POST(request: Request) {
   try {
@@ -170,7 +122,7 @@ export async function POST(request: Request) {
     // protects the final database write, but that check happens too late:
     // /register and subscribed_apps can change external Meta state before
     // an under-privileged write is rejected.
-    const ctx = await requireRole('admin')
+    const ctx = await requireRole('owner')
     const { supabase, accountId, userId } = ctx
 
     const body = await request.json()
@@ -429,8 +381,9 @@ export async function POST(request: Request) {
 export async function DELETE() {
   try {
     // Resetting a shared connection is an account-wide settings change.
-    // Enforce admin+ here as well as in RLS so callers receive a clear 403.
-    const { supabase, accountId } = await requireRole('admin')
+    // Enforce Workspace Owner access here as well as in RLS so callers
+    // receive a clear 403 before any configuration is removed.
+    const { supabase, accountId } = await requireRole('owner')
 
     const { error: deleteError } = await supabase
       .from('whatsapp_config')

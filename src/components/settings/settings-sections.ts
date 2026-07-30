@@ -41,7 +41,7 @@ export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
 export const DEFAULT_SECTION: SettingsSection = 'overview';
 
-/** Rail grouping. `adminOnly` items are hidden for non-admins. */
+/** Rail grouping. `ownerOnly` items are hidden for non-owners. */
 export interface SectionMeta {
   id: SettingsSection;
   label: string;
@@ -80,6 +80,7 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
     label: 'WhatsApp',
     icon: PlugZap,
     group: 'workspace',
+    ownerOnly: true,
   },
   templates: {
     id: 'templates',

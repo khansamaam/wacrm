@@ -139,6 +139,14 @@ export function SettingsOverview({
       setCountsLoading(false);
     })();
 
+    // WhatsApp connection details are owner-only. Do not issue even a
+    // background health request for Admin, Agent, or Viewer sessions.
+    if (!isOwner) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
     // WhatsApp connection status — slower, independent.
     (async () => {
       setWhatsappLoading(true);
@@ -164,7 +172,7 @@ export function SettingsOverview({
     return () => {
       cancelled = true;
     };
-  }, [userId, accountId, canManageMembers, canEditSettings]);
+  }, [userId, accountId, canManageMembers, canEditSettings, isOwner]);
 
   const displayName = profile?.full_name || profile?.email || t('yourAccount');
   const initial = (profile?.full_name || profile?.email || 'U')

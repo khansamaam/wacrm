@@ -13,9 +13,13 @@ describe('settings access', () => {
     expect(isWorkspaceSection('appearance')).toBe(false);
   });
 
-  it('keeps workspace sections available to Admins and Owners', () => {
-    expect(resolveAccessibleSection('whatsapp', true)).toBe('whatsapp');
+  it('keeps ordinary workspace sections available to Admins and Owners', () => {
     expect(resolveAccessibleSection('members', true)).toBe('members');
+  });
+
+  it('keeps WhatsApp connection settings owner-only', () => {
+    expect(resolveAccessibleSection('whatsapp', true, false)).toBe('overview');
+    expect(resolveAccessibleSection('whatsapp', true, true)).toBe('whatsapp');
   });
 
   it('keeps role access owner-only', () => {

@@ -49,7 +49,7 @@ export function WhatsAppConfig() {
     accountId,
     loading: authLoading,
     profileLoading,
-    canEditSettings,
+    isOwner,
   } = useAuth();
 
   const [loading, setLoading] = useState(true);
@@ -189,7 +189,7 @@ export function WhatsAppConfig() {
   }, [authLoading, profileLoading, user, accountId, fetchConfig]);
 
   async function handleSave() {
-    if (!canEditSettings) {
+    if (!isOwner) {
       toast.error(t('adminOnly'));
       return;
     }
@@ -344,7 +344,7 @@ export function WhatsAppConfig() {
   }
 
   async function handleReset() {
-    if (!canEditSettings) {
+    if (!isOwner) {
       toast.error(t('adminOnly'));
       return;
     }
@@ -407,7 +407,7 @@ export function WhatsAppConfig() {
         title={t("title")}
         description={t("description")}
       />
-      {!canEditSettings && (
+      {!isOwner && (
         <Alert className="mb-6 border-primary/30 bg-primary-soft">
           <AlertTriangle className="size-4 text-primary" />
           <AlertTitle className="text-foreground">{t('readOnlyTitle')}</AlertTitle>
@@ -431,7 +431,7 @@ export function WhatsAppConfig() {
                 <AlertDescription className="text-amber-100/80 text-sm">
                   {statusMessage}
                 </AlertDescription>
-                {canEditSettings && (
+                {isOwner && (
                   <Button
                     onClick={handleReset}
                     disabled={resetting}
@@ -594,7 +594,7 @@ export function WhatsAppConfig() {
                 placeholder="e.g. 100234567890123"
                 value={phoneNumberId}
                 onChange={(e) => setPhoneNumberId(e.target.value)}
-                readOnly={!canEditSettings}
+                readOnly={!isOwner}
                 className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
               />
             </div>
@@ -605,7 +605,7 @@ export function WhatsAppConfig() {
                 placeholder="e.g. 100234567890456"
                 value={wabaId}
                 onChange={(e) => setWabaId(e.target.value)}
-                readOnly={!canEditSettings}
+                readOnly={!isOwner}
                 className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
               />
             </div>
@@ -617,13 +617,13 @@ export function WhatsAppConfig() {
                   type={showToken ? 'text' : 'password'}
                   placeholder={t('accessTokenPlaceholder')}
                   value={accessToken}
-                  readOnly={!canEditSettings}
+                  readOnly={!isOwner}
                   onChange={(e) => {
                     setAccessToken(e.target.value);
                     setTokenEdited(true);
                   }}
                   onFocus={() => {
-                    if (canEditSettings && accessToken === MASKED_TOKEN) {
+                    if (isOwner && accessToken === MASKED_TOKEN) {
                       setAccessToken('');
                       setTokenEdited(true);
                     }
@@ -633,7 +633,7 @@ export function WhatsAppConfig() {
                 <button
                   type="button"
                   onClick={() => setShowToken(!showToken)}
-                  disabled={!canEditSettings}
+                  disabled={!isOwner}
                   className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {showToken ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
@@ -652,7 +652,7 @@ export function WhatsAppConfig() {
                 placeholder={t('webhookVerifyTokenPlaceholder')}
                 value={verifyToken}
                 onChange={(e) => setVerifyToken(e.target.value)}
-                readOnly={!canEditSettings}
+                readOnly={!isOwner}
                 className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
               />
               <p className="text-xs text-muted-foreground">
@@ -671,7 +671,7 @@ export function WhatsAppConfig() {
                 maxLength={6}
                 placeholder={t('pinPlaceholder')}
                 value={pin}
-                readOnly={!canEditSettings}
+                readOnly={!isOwner}
                 onChange={(e) =>
                   setPin(e.target.value.replace(/\D/g, '').slice(0, 6))
                 }
@@ -716,7 +716,7 @@ export function WhatsAppConfig() {
 
         {/* Action Buttons */}
         <div className="flex flex-wrap gap-3">
-          {canEditSettings && (
+          {isOwner && (
             <Button
               onClick={handleSave}
               disabled={saving}
@@ -750,7 +750,7 @@ export function WhatsAppConfig() {
               </>
             )}
           </Button>
-          {config && canEditSettings && (
+          {config && isOwner && (
             <Button
               variant="outline"
               onClick={handleReset}
