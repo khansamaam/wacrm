@@ -37,7 +37,6 @@ export async function GET() {
       .from("profiles")
       .select("user_id, full_name, email, avatar_url, account_role, created_at")
       .eq("account_id", ctx.accountId)
-      .eq("access_status", "active")
       .order("created_at", { ascending: true });
 
     if (error) {
