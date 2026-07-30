@@ -297,6 +297,8 @@ export interface WhatsAppConfig {
   id: string;
   user_id: string;
   phone_number_id: string;
+  /** Human-readable WhatsApp number returned by Meta (for example, +971…). */
+  display_phone_number?: string;
   waba_id?: string;
   access_token: string;
   verify_token?: string;

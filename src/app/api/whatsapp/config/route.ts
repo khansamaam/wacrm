@@ -296,6 +296,7 @@ export async function POST(request: Request) {
     // user through a retry.
     const baseRow = {
       phone_number_id,
+      display_phone_number: phoneInfo.display_phone_number,
       waba_id: waba_id || null,
       access_token: encryptedAccessToken,
       verify_token: encryptedVerifyToken,

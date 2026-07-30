@@ -7,7 +7,9 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
 import { useTotalUnread } from '@/hooks/use-total-unread';
 import { useUnreadNotifications } from '@/hooks/use-unread-notifications';
+import { useWhatsAppConnectionStatus } from '@/hooks/use-whatsapp-connection-status';
 import { BrandLogo } from '@/components/brand-logo';
+import { WhatsAppConnectionCard } from '@/components/layout/whatsapp-connection-card';
 import {
   Bell,
   Bot,
@@ -154,6 +156,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
   } = useAuth();
   const totalUnread = useTotalUnread();
   const unreadNotifications = useUnreadNotifications();
+  const whatsappStatus = useWhatsAppConnectionStatus(account?.id);
   // Only surface the account-name strip when it actually carries
   // information. A solo user's personal account is named after them
   // (the 017 signup trigger seeds it from `full_name`), so showing it
@@ -238,6 +241,12 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
 
         {/* Main navigation */}
         <nav className="flex-1 overflow-y-auto px-3 py-4">
+          <WhatsAppConnectionCard
+            status={whatsappStatus}
+            canOpenSettings={isOwner}
+            onNavigate={onClose}
+          />
+
           <ul className="flex flex-col gap-1">
             {navItems
               .filter((item) => canAccessModule(item.module))
