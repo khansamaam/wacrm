@@ -1,19 +1,25 @@
 import { describe, expect, it } from "vitest";
 
-import { getPostSignupDestination } from "./signup";
+import {
+  getPostSignupDestination,
+  hashSignupInviteToken,
+} from "./signup";
+import { hashInviteToken } from "./invitations";
 
 describe("getPostSignupDestination", () => {
-  it("returns to the invitation when signup creates a session immediately", () => {
-    expect(getPostSignupDestination("invite/token value", true)).toBe(
-      "/join/invite%2Ftoken%20value",
-    );
-  });
-
-  it("sends a normal immediately-confirmed signup to the dashboard", () => {
-    expect(getPostSignupDestination(null, true)).toBe("/dashboard");
+  it("sends an immediately-confirmed invited signup to the dashboard", () => {
+    expect(getPostSignupDestination(true)).toBe("/dashboard");
   });
 
   it("waits for the verification-email redirect when no session exists", () => {
-    expect(getPostSignupDestination("invite-token", false)).toBeNull();
+    expect(getPostSignupDestination(false)).toBeNull();
+  });
+});
+
+describe("hashSignupInviteToken", () => {
+  it("produces the same SHA-256 hex format stored by workspace invitations", async () => {
+    await expect(hashSignupInviteToken("invite-token")).resolves.toBe(
+      hashInviteToken("invite-token"),
+    );
   });
 });

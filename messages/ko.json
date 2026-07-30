@@ -12,7 +12,8 @@
     "signingIn": "로그인 중...",
     "signIn": "로그인",
     "noAccount": "계정이 없으신가요?",
-    "createAccount": "계정 만들기"
+    "createAccount": "계정 만들기",
+    "inviteOnly": "새 계정은 워크스페이스 관리자의 초대가 필요합니다."
   },
   "Sidebar": {
     "title": "WhatsApp Manager",

@@ -4,7 +4,10 @@ import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { getPostSignupDestination } from "@/lib/auth/signup";
+import {
+  getPostSignupDestination,
+  hashSignupInviteToken,
+} from "@/lib/auth/signup";
 import { BrandLogo } from "@/components/brand-logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +19,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { CheckCircle, UsersRound } from "lucide-react";
+import { CheckCircle, LockKeyhole, UsersRound } from "lucide-react";
 
 // `useSearchParams` opts the component out of static prerendering
 // unless wrapped in Suspense — same pattern as /login.
@@ -30,11 +33,9 @@ export default function SignupPage() {
 
 function SignupPageInner() {
   const searchParams = useSearchParams();
-  // When the user lands here from `/join/<token>` we carry the
-  // invite token in the query so it survives the signup → email
-  // verification → redirect round-trip. `emailRedirectTo` below
-  // points back at /join/<token> so the user lands on the redeem
-  // step after verifying instead of being dropped on /dashboard.
+  // Registration is available only when the user arrives from a valid
+  // workspace invitation. The database trigger independently verifies the
+  // invitation hash, so removing this UI guard cannot enable public signup.
   const inviteToken = searchParams.get("invite");
 
   const [fullName, setFullName] = useState("");
@@ -62,13 +63,29 @@ function SignupPageInner() {
 
     setLoading(true);
 
-    // If we have an invite token, point Supabase's verification
-    // email back at the join page so the user can accept after
-    // verifying. Without a token, Supabase uses its default
-    // redirect (the app root).
-    const emailRedirectTo = inviteToken
-      ? `${window.location.origin}/join/${encodeURIComponent(inviteToken)}`
-      : undefined;
+    if (!inviteToken) {
+      setError("A valid workspace invitation is required");
+      setLoading(false);
+      return;
+    }
+
+    // Give a clear error before calling Auth. The database trigger repeats
+    // this validation atomically to close expiry/reuse race conditions.
+    const peekResponse = await fetch(
+      `/api/invitations/${encodeURIComponent(inviteToken)}/peek`,
+      { cache: "no-store" },
+    ).catch(() => null);
+    const peek = (await peekResponse?.json().catch(() => null)) as
+      | { ok?: boolean }
+      | null;
+    if (!peekResponse?.ok || !peek?.ok) {
+      setError("This invitation is invalid, expired, or already used");
+      setLoading(false);
+      return;
+    }
+
+    const inviteTokenHash = await hashSignupInviteToken(inviteToken);
+    const emailRedirectTo = `${window.location.origin}/dashboard`;
 
     const { data, error } = await supabase.auth.signUp({
       email,
@@ -76,8 +93,9 @@ function SignupPageInner() {
       options: {
         data: {
           full_name: fullName,
+          invite_token_hash: inviteTokenHash,
         },
-        ...(emailRedirectTo ? { emailRedirectTo } : {}),
+        emailRedirectTo,
       },
     });
 
@@ -87,15 +105,9 @@ function SignupPageInner() {
       return;
     }
 
-    // Supabase returns a live session immediately when Confirm Email is
-    // disabled. In that mode there is no verification-email redirect, so
-    // invited users would otherwise stop on the "Check your email" screen
-    // and remain owners of the temporary personal account created by the
-    // signup trigger. Return them to /join/<token> to complete redemption.
-    const destination = getPostSignupDestination(
-      inviteToken,
-      Boolean(data.session),
-    );
+    // When email confirmation is disabled Supabase returns a live session.
+    // The signup trigger has already attached the profile to the workspace.
+    const destination = getPostSignupDestination(Boolean(data.session));
     if (destination) {
       window.location.replace(destination);
       return;
@@ -124,11 +136,7 @@ function SignupPageInner() {
           </CardHeader>
           <CardContent>
             <Link
-              href={
-                inviteToken
-                  ? `/login?invite=${encodeURIComponent(inviteToken)}`
-                  : "/login"
-              }
+              href={`/login?invite=${encodeURIComponent(inviteToken!)}`}
             >
               <Button
                 variant="outline"
@@ -143,24 +151,47 @@ function SignupPageInner() {
     );
   }
 
+  if (!inviteToken) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+        <Card className="w-full max-w-md border-border bg-card">
+          <CardHeader className="items-center text-center">
+            <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
+              <BrandLogo size={48} className="h-12 w-12" />
+            </div>
+            <CardTitle className="text-xl text-foreground">
+              Registration is invitation only
+            </CardTitle>
+            <CardDescription className="text-muted-foreground">
+              Ask a workspace administrator to invite you, then open the
+              invitation link to create your account.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Link href="/login">
+              <Button className="w-full">
+                <LockKeyhole className="size-4" />
+                Sign in
+              </Button>
+            </Link>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <Card className="w-full max-w-md border-border bg-card">
         <CardHeader className="items-center text-center">
           <div className="mb-2 flex h-12 w-12 justify-self-center items-center justify-center rounded-xl bg-primary/10">
-            {inviteToken ? (
-              <UsersRound className="h-6 w-6 text-primary" />
-            ) : (
-              <BrandLogo size={48} className="h-12 w-12" />
-            )}
+            <UsersRound className="h-6 w-6 text-primary" />
           </div>
           <CardTitle className="text-xl text-foreground">
-            {inviteToken ? "Create account & join" : "Create account"}
+            Create account &amp; join
           </CardTitle>
           <CardDescription className="text-muted-foreground">
-            {inviteToken
-              ? "Verify your email, then accept the invitation to join your team."
-              : "Get started with WhatsApp Manager"}
+            Verify your email to join the workspace that invited you.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -243,11 +274,7 @@ function SignupPageInner() {
           <p className="mt-6 text-center text-sm text-muted-foreground">
             Already have an account?{" "}
             <Link
-              href={
-                inviteToken
-                  ? `/login?invite=${encodeURIComponent(inviteToken)}`
-                  : "/login"
-              }
+              href={`/login?invite=${encodeURIComponent(inviteToken)}`}
               className="text-primary hover:text-primary/80"
             >
               Sign in

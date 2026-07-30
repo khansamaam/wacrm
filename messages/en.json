@@ -12,7 +12,8 @@
     "signingIn": "Signing in...",
     "signIn": "Sign in",
     "noAccount": "Don't have an account?",
-    "createAccount": "Create account"
+    "createAccount": "Create account",
+    "inviteOnly": "New accounts require an invitation from a workspace administrator."
   },
   "Sidebar": {
     "title": "WhatsApp Manager",

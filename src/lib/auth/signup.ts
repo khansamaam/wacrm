@@ -1,21 +1,29 @@
 /**
- * Choose where to send a user when Supabase returns an authenticated
+ * Hash an invitation token before attaching it to Supabase user metadata.
+ *
+ * The database stores invitation hashes rather than plaintext tokens. The
+ * signup trigger compares this value with an unused workspace invitation
+ * before it creates the profile.
+ */
+export async function hashSignupInviteToken(token: string): Promise<string> {
+  const bytes = new TextEncoder().encode(token);
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
+
+/**
+ * Choose where to send an invited user when Supabase returns an authenticated
  * session directly from signUp().
  *
- * This happens when Confirm Email is disabled. Invited signups must return
- * to the invitation page so the explicit redemption step can move their
- * profile out of the temporary personal account and into the team.
- *
- * When confirmation is enabled, signUp() returns no session and the email's
- * redirectTo handles navigation instead, so this helper returns null.
+ * New invited users are linked directly to the inviting workspace by the
+ * database trigger, so no second invitation-redemption step is necessary.
+ * When confirmation is enabled the email redirect handles navigation.
  */
 export function getPostSignupDestination(
-  inviteToken: string | null,
   hasSession: boolean,
 ): string | null {
   if (!hasSession) return null;
-  if (inviteToken) {
-    return `/join/${encodeURIComponent(inviteToken)}`;
-  }
   return "/dashboard";
 }

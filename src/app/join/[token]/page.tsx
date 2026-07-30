@@ -11,7 +11,7 @@
 //   │ peek                 │ auth          │ render                   │
 //   ├──────────────────────┼───────────────┼─────────────────────────┤
 //   │ loading              │ —             │ spinner                  │
-//   │ ok:false (any reason)│ —             │ friendly error + signup  │
+//   │ ok:false (any reason)│ —             │ friendly error + sign in │
 //   │ ok:true              │ signed out    │ "Sign up" + "Sign in"    │
 //   │ ok:true              │ signed in     │ "Accept" button → redeem │
 //   └──────────────────────┴───────────────┴─────────────────────────┘
@@ -244,13 +244,10 @@ export default function JoinPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-2">
-          {/* For server_error the failure is transient — the network
-              flapped or the peek endpoint hiccupped. Try-again is
-              the right primary action; the "create account" /
-              "sign in" links stay as secondary options. Other
-              failure reasons (not_found / used / expired) are
-              terminal for this token, so no retry — just the
-              signup/sign-in escape hatches. */}
+          {/* Registration always requires a valid invitation. A transient
+              server failure can be retried; terminal token failures only
+              offer sign-in because /signup cannot create a standalone
+              account. */}
           {peek.reason === 'server_error' ? (
             <>
               <Button
@@ -259,22 +256,6 @@ export default function JoinPage() {
               >
                 Try again
               </Button>
-              <Link href="/signup">
-                <Button
-                  variant="outline"
-                  className="w-full border-border text-muted-foreground hover:bg-muted hover:text-foreground"
-                >
-                  Create a new account instead
-                </Button>
-              </Link>
-            </>
-          ) : (
-            <>
-              <Link href="/signup">
-                <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
-                  Create a new account instead
-                </Button>
-              </Link>
               <Link href="/login">
                 <Button
                   variant="outline"
@@ -284,6 +265,15 @@ export default function JoinPage() {
                 </Button>
               </Link>
             </>
+          ) : (
+            <Link href="/login">
+              <Button
+                variant="outline"
+                className="w-full border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                Sign in
+              </Button>
+            </Link>
           )}
         </CardContent>
       </Card>
