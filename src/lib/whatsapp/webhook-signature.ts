@@ -12,22 +12,26 @@ import crypto from 'node:crypto'
  *   https://developers.facebook.com/docs/graph-api/webhooks/getting-started#verify-payloads
  *
  * Contract:
- *   `META_APP_SECRET` is **required**. If it's missing we fail closed —
- *   every request is rejected until the operator configures the
- *   secret. A previous version fell open with a warning log, which is
- *   unsafe for a public template: anyone who forgets the env var would
- *   be running a fully spoofable webhook.
+ *   At least one candidate app secret is required. Multi-number workspaces
+ *   can connect numbers from different Meta apps, so callers pass the
+ *   per-number secret(s) resolved from the webhook payload. We fail closed
+ *   when no secret is available.
  */
 export function verifyMetaWebhookSignature(
   rawBody: string,
   signatureHeader: string | null,
+  candidateSecrets: Array<string | null | undefined> = [process.env.META_APP_SECRET],
 ): boolean {
-  const secret = process.env.META_APP_SECRET
-  if (!secret) {
+  const secrets = [
+    ...new Set(
+      candidateSecrets
+        .map((secret) => secret?.trim())
+        .filter((secret): secret is string => Boolean(secret)),
+    ),
+  ]
+  if (secrets.length === 0) {
     console.error(
-      '[webhook] META_APP_SECRET is not set — rejecting request. ' +
-        'Configure the env var (Meta → App Settings → Basic → App Secret) ' +
-        'to enable signature verification.',
+      '[webhook] No Meta App Secret is available for this webhook payload — rejecting request.',
     )
     return false
   }
@@ -35,13 +39,14 @@ export function verifyMetaWebhookSignature(
   if (!signatureHeader) return false
   if (!signatureHeader.startsWith('sha256=')) return false
 
-  const expected =
-    'sha256=' +
-    crypto.createHmac('sha256', secret).update(rawBody).digest('hex')
-
   const a = Buffer.from(signatureHeader)
-  const b = Buffer.from(expected)
-  // Bail if lengths differ — timingSafeEqual throws otherwise.
-  if (a.length !== b.length) return false
-  return crypto.timingSafeEqual(a, b)
+  return secrets.some((secret) => {
+    const expected =
+      'sha256=' +
+      crypto.createHmac('sha256', secret).update(rawBody).digest('hex')
+    const b = Buffer.from(expected)
+    // Bail if lengths differ — timingSafeEqual throws otherwise.
+    if (a.length !== b.length) return false
+    return crypto.timingSafeEqual(a, b)
+  })
 }

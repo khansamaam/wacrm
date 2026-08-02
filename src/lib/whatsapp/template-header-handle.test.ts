@@ -53,9 +53,9 @@ describe('ensureImageHeaderHandle', () => {
     expect(p.header_handle).toBe('existing');
   });
 
-  it('throws an actionable error when META_APP_ID is unset', async () => {
+  it('throws an actionable error when no Meta App ID is available', async () => {
     const p = payload();
-    await expect(ensureImageHeaderHandle(p, 'tok')).rejects.toThrow(/META_APP_ID/);
+    await expect(ensureImageHeaderHandle(p, 'tok')).rejects.toThrow(/Meta App ID/);
   });
 
   it('derives + sets header_handle from a valid image URL', async () => {
@@ -65,6 +65,16 @@ describe('ensureImageHeaderHandle', () => {
     await ensureImageHeaderHandle(p, 'tok');
     expect(uploadResumableMedia).toHaveBeenCalledOnce();
     expect(p.header_handle).toBe('HANDLE123');
+  });
+
+  it('uses the per-number Meta App ID when provided', async () => {
+    vi.stubEnv('META_APP_ID', '');
+    vi.stubGlobal('fetch', vi.fn(async () => imgResponse('image/png', 2048)));
+    const p = payload();
+    await ensureImageHeaderHandle(p, 'tok', 'number-app-1');
+    expect(uploadResumableMedia).toHaveBeenCalledWith(
+      expect.objectContaining({ appId: 'number-app-1' }),
+    );
   });
 
   it('rejects a non-image content type', async () => {

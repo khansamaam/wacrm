@@ -12,6 +12,7 @@ import {
   Check,
   Cloud,
   Copy,
+  KeyRound,
   Loader2,
   MoreHorizontal,
   Plus,
@@ -83,9 +84,16 @@ export function WhatsAppNumbers() {
   const [pin, setPin] = useState('');
   const [metaAppId, setMetaAppId] = useState('');
   const [metaAppSecret, setMetaAppSecret] = useState('');
-  const [metaAppSecretConfigured, setMetaAppSecretConfigured] = useState(false);
   const [metaCoexistenceConfigId, setMetaCoexistenceConfigId] = useState('');
   const [loadingEmbeddedConfig, setLoadingEmbeddedConfig] = useState(false);
+  const [editingNumber, setEditingNumber] = useState<WhatsAppNumber | null>(
+    null
+  );
+  const [editLabel, setEditLabel] = useState('');
+  const [editMetaAppId, setEditMetaAppId] = useState('');
+  const [editMetaAppSecret, setEditMetaAppSecret] = useState('');
+  const [editMetaCoexistenceConfigId, setEditMetaCoexistenceConfigId] =
+    useState('');
   const signupResultRef = useRef<Omit<EmbeddedSignupResult, 'code'> | null>(
     null
   );
@@ -136,7 +144,6 @@ export function WhatsAppNumbers() {
       const coexistenceConfigId = readString(body.coexistenceConfigId);
       if (appId) setMetaAppId(appId);
       if (coexistenceConfigId) setMetaCoexistenceConfigId(coexistenceConfigId);
-      setMetaAppSecretConfigured(body.hasAppSecret === true);
     } catch (error) {
       toast.error(
         error instanceof Error
@@ -193,7 +200,7 @@ export function WhatsAppNumbers() {
   useEffect(() => {
     if (
       dialogOpen &&
-      step === 'coexistence' &&
+      step !== 'choose' &&
       !metaAppId &&
       !metaCoexistenceConfigId
     ) {
@@ -217,7 +224,6 @@ export function WhatsAppNumbers() {
     setPin('');
     setMetaAppId('');
     setMetaAppSecret('');
-    setMetaAppSecretConfigured(false);
     setMetaCoexistenceConfigId('');
     setDialogOpen(true);
   }
@@ -235,6 +241,9 @@ export function WhatsAppNumbers() {
           waba_id: wabaId,
           access_token: accessToken,
           verify_token: verifyToken,
+          meta_app_id: metaAppId,
+          meta_app_secret: metaAppSecret,
+          meta_coexistence_config_id: metaCoexistenceConfigId,
           pin,
         }),
       });
@@ -261,11 +270,7 @@ export function WhatsAppNumbers() {
     const appId = metaAppId.trim();
     const appSecret = metaAppSecret.trim();
     const coexistenceConfigId = metaCoexistenceConfigId.trim();
-    if (
-      !appId ||
-      !coexistenceConfigId ||
-      (!metaAppSecretConfigured && !appSecret)
-    ) {
+    if (!appId || !coexistenceConfigId || !appSecret) {
       toast.error(
         'Enter the Meta App ID, App Secret, and Coexistence Configuration ID'
       );
@@ -323,7 +328,8 @@ export function WhatsAppNumbers() {
         body: JSON.stringify({
           code,
           app_id: appId,
-          app_secret: metaAppSecretConfigured ? undefined : appSecret,
+          app_secret: appSecret,
+          coexistence_config_id: coexistenceConfigId,
           label,
           ...signup,
         }),
@@ -369,6 +375,45 @@ export function WhatsAppNumbers() {
       return toast.error(readError(body, 'Failed to disconnect number'));
     toast.success('WhatsApp number disconnected');
     await loadNumbers();
+  }
+
+  function openEditNumber(number: WhatsAppNumber) {
+    setEditingNumber(number);
+    setEditLabel(number.label);
+    setEditMetaAppId(number.meta_app_id ?? '');
+    setEditMetaAppSecret('');
+    setEditMetaCoexistenceConfigId(
+      number.meta_coexistence_config_id ?? ''
+    );
+  }
+
+  async function saveMetaSettings() {
+    if (!editingNumber) return;
+    setSubmitting(true);
+    try {
+      const response = await fetch(`/api/whatsapp/numbers/${editingNumber.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          label: editLabel,
+          meta_app_id: editMetaAppId,
+          meta_app_secret: editMetaAppSecret,
+          meta_coexistence_config_id: editMetaCoexistenceConfigId,
+        }),
+      });
+      const body = await readJson(response);
+      if (!response.ok)
+        throw new Error(readError(body, 'Failed to update Meta settings'));
+      toast.success('Meta settings updated');
+      setEditingNumber(null);
+      await loadNumbers();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : 'Failed to update Meta settings'
+      );
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   async function copySetupValue(value: string, label: string) {
@@ -459,6 +504,12 @@ export function WhatsAppNumbers() {
                           Make default
                         </DropdownMenuItem>
                       )}
+                      <DropdownMenuItem
+                        onClick={() => openEditNumber(number)}
+                      >
+                        <KeyRound className="mr-2 size-4" />
+                        Meta settings
+                      </DropdownMenuItem>
                       {number.status !== 'disconnected' && (
                         <DropdownMenuItem
                           className="text-destructive"
@@ -564,6 +615,30 @@ export function WhatsAppNumbers() {
                   onChange={(e) => setWabaId(e.target.value)}
                 />
               </Field>
+              <Field label="Meta App ID">
+                <Input
+                  value={metaAppId}
+                  onChange={(event) => setMetaAppId(event.target.value)}
+                  placeholder="Meta app connected to this phone number"
+                />
+              </Field>
+              <Field label="Meta App Secret">
+                <Input
+                  type="password"
+                  value={metaAppSecret}
+                  onChange={(event) => setMetaAppSecret(event.target.value)}
+                  placeholder="Used to verify this number’s webhook events"
+                />
+              </Field>
+              <Field label="Coexistence Configuration ID (optional)">
+                <Input
+                  value={metaCoexistenceConfigId}
+                  onChange={(event) =>
+                    setMetaCoexistenceConfigId(event.target.value)
+                  }
+                  placeholder="Only needed if this app also supports coexistence"
+                />
+              </Field>
               <Field label="Permanent access token">
                 <Input
                   type="password"
@@ -590,7 +665,13 @@ export function WhatsAppNumbers() {
                   Back
                 </Button>
                 <Button
-                  disabled={submitting || !phoneNumberId || !accessToken}
+                  disabled={
+                    submitting ||
+                    !phoneNumberId ||
+                    !accessToken ||
+                    !metaAppId.trim() ||
+                    !metaAppSecret.trim()
+                  }
                   onClick={() => void addCloudNumber()}
                 >
                   {submitting && (
@@ -622,24 +703,14 @@ export function WhatsAppNumbers() {
                   }
                 />
               </Field>
-              {metaAppSecretConfigured ? (
-                <div className="bg-muted/30 text-muted-foreground rounded-lg border p-3 text-sm">
-                  Meta App Secret is configured on the server.
-                </div>
-              ) : (
-                <Field label="Meta App Secret">
-                  <Input
-                    type="password"
-                    value={metaAppSecret}
-                    onChange={(event) => setMetaAppSecret(event.target.value)}
-                    placeholder={
-                      loadingEmbeddedConfig
-                        ? 'Checking server configuration...'
-                        : 'Paste Meta App Secret'
-                    }
-                  />
-                </Field>
-              )}
+              <Field label="Meta App Secret">
+                <Input
+                  type="password"
+                  value={metaAppSecret}
+                  onChange={(event) => setMetaAppSecret(event.target.value)}
+                  placeholder="Paste this number’s Meta App Secret"
+                />
+              </Field>
               <Field label="Coexistence Configuration ID">
                 <Input
                   value={metaCoexistenceConfigId}
@@ -667,7 +738,7 @@ export function WhatsAppNumbers() {
                     submitting ||
                     loadingEmbeddedConfig ||
                     !metaAppId.trim() ||
-                    (!metaAppSecretConfigured && !metaAppSecret.trim()) ||
+                    !metaAppSecret.trim() ||
                     !metaCoexistenceConfigId.trim()
                   }
                   onClick={() => void startCoexistenceSignup()}
@@ -680,6 +751,64 @@ export function WhatsAppNumbers() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(editingNumber)} onOpenChange={(open) => {
+        if (!open) setEditingNumber(null);
+      }}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Meta settings</DialogTitle>
+            <DialogDescription>
+              Save the Meta app details used by this WhatsApp number. Secrets
+              are encrypted and never shown again after saving.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <Field label="Label">
+              <Input
+                value={editLabel}
+                onChange={(event) => setEditLabel(event.target.value)}
+              />
+            </Field>
+            <Field label="Meta App ID">
+              <Input
+                value={editMetaAppId}
+                onChange={(event) => setEditMetaAppId(event.target.value)}
+              />
+            </Field>
+            <Field label="Meta App Secret">
+              <Input
+                type="password"
+                value={editMetaAppSecret}
+                onChange={(event) => setEditMetaAppSecret(event.target.value)}
+                placeholder={
+                  editingNumber?.has_meta_app_secret
+                    ? 'Leave blank to keep existing secret'
+                    : 'Paste Meta App Secret'
+                }
+              />
+            </Field>
+            <Field label="Coexistence Configuration ID">
+              <Input
+                value={editMetaCoexistenceConfigId}
+                onChange={(event) =>
+                  setEditMetaCoexistenceConfigId(event.target.value)
+                }
+                placeholder="Optional for Cloud API numbers"
+              />
+            </Field>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setEditingNumber(null)}>
+                Cancel
+              </Button>
+              <Button disabled={submitting} onClick={() => void saveMetaSettings()}>
+                {submitting && <Loader2 className="mr-2 size-4 animate-spin" />}
+                Save settings
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

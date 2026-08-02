@@ -143,7 +143,7 @@ export async function PATCH(
     if (!isDryRun()) {
       const { data: config, error: configError } = await supabase
         .from('whatsapp_numbers')
-        .select('access_token')
+        .select('access_token, meta_app_id')
         .eq('account_id', accountId)
         .eq('waba_id', existing.waba_id)
         .eq('status', 'connected')
@@ -163,7 +163,7 @@ export async function PATCH(
       // Image headers need a fresh Resumable-Upload handle on every edit
       // (Meta replaces components wholesale). Derive from header_media_url.
       try {
-        await ensureImageHeaderHandle(payload, accessToken)
+        await ensureImageHeaderHandle(payload, accessToken, config.meta_app_id)
       } catch (e) {
         return NextResponse.json(
           { error: e instanceof Error ? e.message : 'Header image upload failed.' },

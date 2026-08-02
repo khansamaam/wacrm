@@ -12,6 +12,9 @@ export interface WhatsAppNumberRow {
   connection_method: 'cloud_api' | 'coexistence'
   access_token: string | null
   verify_token: string | null
+  meta_app_id: string | null
+  meta_app_secret: string | null
+  meta_coexistence_config_id: string | null
   status: 'pending' | 'connected' | 'error' | 'disconnected'
   is_default: boolean
   connected_at: string | null
@@ -40,8 +43,10 @@ export interface WhatsAppNumberRow {
 /** Safe shape returned to browser clients. It intentionally contains no tokens. */
 export type WhatsAppNumberSummary = Omit<
   WhatsAppNumberRow,
-  'access_token' | 'verify_token' | 'created_by_user_id'
->
+  'access_token' | 'verify_token' | 'meta_app_secret' | 'created_by_user_id'
+> & {
+  has_meta_app_secret: boolean
+}
 
 export class WhatsAppNumberError extends Error {
   constructor(
@@ -58,7 +63,7 @@ export class WhatsAppNumberError extends Error {
   }
 }
 
-const SERVER_COLUMNS = [
+export const SERVER_NUMBER_COLUMNS = [
   'id',
   'account_id',
   'created_by_user_id',
@@ -69,6 +74,9 @@ const SERVER_COLUMNS = [
   'connection_method',
   'access_token',
   'verify_token',
+  'meta_app_id',
+  'meta_app_secret',
+  'meta_coexistence_config_id',
   'status',
   'is_default',
   'connected_at',
@@ -92,6 +100,8 @@ export const SAFE_NUMBER_COLUMNS = [
   'display_phone_number',
   'waba_id',
   'connection_method',
+  'meta_app_id',
+  'meta_coexistence_config_id',
   'status',
   'is_default',
   'connected_at',
@@ -163,7 +173,7 @@ export async function resolveWhatsAppNumber({
 
   let query = supabase
     .from('whatsapp_numbers')
-    .select(SERVER_COLUMNS)
+    .select(SERVER_NUMBER_COLUMNS)
     .eq('account_id', accountId)
 
   if (resolvedId) {
@@ -187,7 +197,7 @@ export async function resolveWhatsAppNumber({
   if (!number && !resolvedId) {
     const { data: rows, error: rowsError } = await supabase
       .from('whatsapp_numbers')
-      .select(SERVER_COLUMNS)
+      .select(SERVER_NUMBER_COLUMNS)
       .eq('account_id', accountId)
       .limit(2)
     if (rowsError) {
@@ -221,10 +231,18 @@ export async function resolveWhatsAppNumber({
 export function sanitizeWhatsAppNumber(
   row: WhatsAppNumberRow,
 ): WhatsAppNumberSummary {
-  const { access_token: _accessToken, verify_token: _verifyToken,
-    created_by_user_id: _createdBy, ...safe } = row
+  const {
+    access_token: _accessToken,
+    verify_token: _verifyToken,
+    meta_app_secret: metaAppSecret,
+    created_by_user_id: _createdBy,
+    ...safe
+  } = row
   void _accessToken
   void _verifyToken
   void _createdBy
-  return safe
+  return {
+    ...safe,
+    has_meta_app_secret: Boolean(metaAppSecret),
+  }
 }

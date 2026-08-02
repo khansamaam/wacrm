@@ -96,6 +96,62 @@ interface WhatsAppWebhookEntry {
   }>
 }
 
+function extractWebhookPhoneNumberIds(rawBody: string): string[] {
+  try {
+    const body = JSON.parse(rawBody) as { entry?: WhatsAppWebhookEntry[] }
+    const ids = new Set<string>()
+    for (const entry of body.entry ?? []) {
+      for (const change of entry.changes ?? []) {
+        const value = change.value
+        const metadata = value.metadata
+        if (typeof metadata?.phone_number_id === 'string') {
+          ids.add(metadata.phone_number_id)
+        }
+        if (typeof value.phone_number_id === 'string') {
+          ids.add(value.phone_number_id)
+        }
+      }
+    }
+    return [...ids]
+  } catch {
+    return []
+  }
+}
+
+async function loadWebhookSignatureSecrets(rawBody: string): Promise<string[]> {
+  const candidates = new Set<string>()
+  const legacySecret = process.env.META_APP_SECRET?.trim()
+  if (legacySecret) candidates.add(legacySecret)
+
+  const phoneNumberIds = extractWebhookPhoneNumberIds(rawBody)
+  if (phoneNumberIds.length === 0) return [...candidates]
+
+  const { data, error } = await supabaseAdmin()
+    .from('whatsapp_numbers')
+    .select('phone_number_id, meta_app_secret')
+    .in('phone_number_id', phoneNumberIds)
+
+  if (error) {
+    console.error('[webhook] failed to load per-number app secrets:', error)
+    return [...candidates]
+  }
+
+  for (const row of data ?? []) {
+    if (!row.meta_app_secret) continue
+    try {
+      candidates.add(decrypt(row.meta_app_secret))
+    } catch (error) {
+      console.error(
+        '[webhook] failed to decrypt per-number app secret:',
+        row.phone_number_id,
+        error,
+      )
+    }
+  }
+
+  return [...candidates]
+}
+
 // GET - Webhook verification
 export async function GET(request: Request) {
   try {
@@ -184,8 +240,9 @@ export async function POST(request: Request) {
   // signed. request.json() would re-encode and break the signature.
   const rawBody = await request.text()
   const signature = request.headers.get('x-hub-signature-256')
+  const candidateSecrets = await loadWebhookSignatureSecrets(rawBody)
 
-  if (!verifyMetaWebhookSignature(rawBody, signature)) {
+  if (!verifyMetaWebhookSignature(rawBody, signature, candidateSecrets)) {
     // 401 (not 200) — we want Meta's delivery dashboard to show failures
     // loudly if a misconfiguration causes signatures to stop matching,
     // rather than silently eating events.

@@ -339,6 +339,9 @@ export interface WhatsAppNumber {
   display_phone_number?: string | null;
   waba_id?: string | null;
   connection_method: WhatsAppConnectionMethod;
+  meta_app_id?: string | null;
+  meta_coexistence_config_id?: string | null;
+  has_meta_app_secret?: boolean;
   status: WhatsAppNumberStatus;
   is_default: boolean;
   connected_at?: string | null;

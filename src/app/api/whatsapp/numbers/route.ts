@@ -7,7 +7,11 @@ import {
   subscribeWabaToApp,
   verifyPhoneNumber,
 } from '@/lib/whatsapp/meta-api'
-import { SAFE_NUMBER_COLUMNS } from '@/lib/whatsapp/numbers'
+import {
+  SERVER_NUMBER_COLUMNS,
+  sanitizeWhatsAppNumber,
+  type WhatsAppNumberRow,
+} from '@/lib/whatsapp/numbers'
 
 const MAX_LABEL_LENGTH = 80
 
@@ -16,7 +20,7 @@ export async function GET() {
     const { supabase, accountId } = await requireRole('viewer')
     const { data, error } = await supabase
       .from('whatsapp_numbers')
-      .select(SAFE_NUMBER_COLUMNS)
+      .select(SERVER_NUMBER_COLUMNS)
       .eq('account_id', accountId)
       .order('is_default', { ascending: false })
       .order('created_at', { ascending: true })
@@ -27,7 +31,11 @@ export async function GET() {
     }
 
     return NextResponse.json(
-      { numbers: data ?? [] },
+      {
+        numbers: (data ?? []).map((row) =>
+          sanitizeWhatsAppNumber(row as unknown as WhatsAppNumberRow),
+        ),
+      },
       { headers: { 'Cache-Control': 'private, no-store' } },
     )
   } catch (error) {
@@ -42,6 +50,9 @@ interface AddCloudApiNumberBody {
   waba_id?: unknown
   access_token?: unknown
   verify_token?: unknown
+  meta_app_id?: unknown
+  meta_app_secret?: unknown
+  meta_coexistence_config_id?: unknown
   pin?: unknown
 }
 
@@ -71,6 +82,16 @@ export async function POST(request: Request) {
     const verifyToken = typeof body.verify_token === 'string'
       ? body.verify_token.trim()
       : ''
+    const metaAppId = typeof body.meta_app_id === 'string'
+      ? body.meta_app_id.trim()
+      : ''
+    const metaAppSecret = typeof body.meta_app_secret === 'string'
+      ? body.meta_app_secret.trim()
+      : ''
+    const metaCoexistenceConfigId =
+      typeof body.meta_coexistence_config_id === 'string'
+        ? body.meta_coexistence_config_id.trim()
+        : ''
     const pin = typeof body.pin === 'string' ? body.pin.trim() : ''
     const label = typeof body.label === 'string' && body.label.trim()
       ? body.label.trim()
@@ -90,6 +111,15 @@ export async function POST(request: Request) {
     }
     if (pin && !/^\d{6}$/.test(pin)) {
       return NextResponse.json({ error: 'PIN must be exactly 6 digits' }, { status: 400 })
+    }
+    if (!metaAppId || !metaAppSecret) {
+      return NextResponse.json(
+        {
+          error:
+            'Meta App ID and Meta App Secret are required for each Cloud API number so webhook signatures can be verified correctly.',
+        },
+        { status: 400 },
+      )
     }
 
     let phoneInfo
@@ -133,9 +163,11 @@ export async function POST(request: Request) {
 
     let encryptedAccessToken: string
     let encryptedVerifyToken: string | null
+    let encryptedMetaAppSecret: string
     try {
       encryptedAccessToken = encrypt(accessToken)
       encryptedVerifyToken = verifyToken ? encrypt(verifyToken) : null
+      encryptedMetaAppSecret = encrypt(metaAppSecret)
     } catch {
       return NextResponse.json(
         { error: 'Failed to encrypt credentials. Verify ENCRYPTION_KEY.' },
@@ -156,6 +188,9 @@ export async function POST(request: Request) {
         connection_method: 'cloud_api',
         access_token: encryptedAccessToken,
         verify_token: encryptedVerifyToken,
+        meta_app_id: metaAppId,
+        meta_app_secret: encryptedMetaAppSecret,
+        meta_coexistence_config_id: metaCoexistenceConfigId || null,
         status: registrationError ? 'error' : 'connected',
         is_default: (count ?? 0) === 0,
         connected_at: registrationError ? null : now,
@@ -163,7 +198,7 @@ export async function POST(request: Request) {
         subscribed_apps_at: subscribedAppsAt,
         last_registration_error: registrationError,
       })
-      .select(SAFE_NUMBER_COLUMNS)
+      .select(SERVER_NUMBER_COLUMNS)
       .single()
 
     if (error) {
@@ -179,7 +214,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json(
       {
-        number: data,
+        number: sanitizeWhatsAppNumber(data as unknown as WhatsAppNumberRow),
         registered: registeredAt !== null,
         registration_skipped: !pin,
         registration_error: registrationError,

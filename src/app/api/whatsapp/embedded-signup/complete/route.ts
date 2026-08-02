@@ -7,12 +7,17 @@ import {
   subscribeWabaToApp,
   verifyPhoneNumber,
 } from '@/lib/whatsapp/meta-api';
-import { SAFE_NUMBER_COLUMNS } from '@/lib/whatsapp/numbers';
+import {
+  SERVER_NUMBER_COLUMNS,
+  sanitizeWhatsAppNumber,
+  type WhatsAppNumberRow,
+} from '@/lib/whatsapp/numbers';
 
 interface CompletionBody {
   code?: unknown;
   app_id?: unknown;
   app_secret?: unknown;
+  coexistence_config_id?: unknown;
   phone_number_id?: unknown;
   waba_id?: unknown;
   business_id?: unknown;
@@ -34,6 +39,10 @@ export async function POST(request: Request) {
       typeof body?.app_id === 'string' ? body.app_id.trim() : '';
     const requestedAppSecret =
       typeof body?.app_secret === 'string' ? body.app_secret.trim() : '';
+    const requestedCoexistenceConfigId =
+      typeof body?.coexistence_config_id === 'string'
+        ? body.coexistence_config_id.trim()
+        : '';
     const phoneNumberId =
       typeof body?.phone_number_id === 'string'
         ? body.phone_number_id.trim()
@@ -62,30 +71,17 @@ export async function POST(request: Request) {
       );
     }
 
-    const configuredAppId =
+    const legacyConfiguredAppId =
       process.env.META_APP_ID ?? process.env.NEXT_PUBLIC_META_APP_ID;
-    const appId = configuredAppId || requestedAppId;
-    const appSecret = process.env.META_APP_SECRET || requestedAppSecret;
-    if (!appId || !appSecret) {
+    const appId = requestedAppId || legacyConfiguredAppId || '';
+    const appSecret = requestedAppSecret;
+    if (!appId || !appSecret || !requestedCoexistenceConfigId) {
       return NextResponse.json(
         {
           error:
-            'Meta App ID and META_APP_SECRET are required to complete Embedded Signup',
+            'Meta App ID, Meta App Secret, and Coexistence Configuration ID are required to complete Embedded Signup',
         },
         { status: 503 }
-      );
-    }
-    if (
-      configuredAppId &&
-      requestedAppId &&
-      requestedAppId !== configuredAppId
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            'The submitted Meta App ID does not match the configured server app',
-        },
-        { status: 400 }
       );
     }
 
@@ -143,6 +139,9 @@ export async function POST(request: Request) {
         waba_id: wabaId,
         connection_method: 'coexistence',
         access_token: encrypt(accessToken),
+        meta_app_id: appId,
+        meta_app_secret: encrypt(appSecret),
+        meta_coexistence_config_id: requestedCoexistenceConfigId,
         status: 'connected',
         is_default: (count ?? 0) === 0,
         connected_at: now,
@@ -157,7 +156,7 @@ export async function POST(request: Request) {
         contacts_sync_requested_at: now,
         metadata: businessId ? { business_id: businessId } : {},
       })
-      .select(SAFE_NUMBER_COLUMNS)
+      .select(SERVER_NUMBER_COLUMNS)
       .single();
 
     if (error) {
@@ -196,7 +195,10 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json({ number: data }, { status: 201 });
+    return NextResponse.json(
+      { number: sanitizeWhatsAppNumber(data as unknown as WhatsAppNumberRow) },
+      { status: 201 }
+    );
   } catch (error) {
     return toErrorResponse(error);
   }
