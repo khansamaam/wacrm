@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { decrypt } from '@/lib/whatsapp/encryption'
+import { resolveWhatsAppNumber, WhatsAppNumberError } from '@/lib/whatsapp/numbers'
 import { normalizeStatus } from '@/lib/whatsapp/template-status-normalize'
 import type { TemplateButton, TemplateSampleValues } from '@/types'
 
@@ -122,7 +123,7 @@ function extractSampleValues(
   return sv
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
     const supabase = await createClient()
 
@@ -139,7 +140,7 @@ export async function POST() {
     // the message_templates we sync into are account-scoped.
     const { data: profile } = await supabase
       .from('profiles')
-      .select('account_id')
+      .select('account_id, account_role')
       .eq('user_id', user.id)
       .maybeSingle()
     const accountId = profile?.account_id as string | undefined
@@ -149,20 +150,19 @@ export async function POST() {
         { status: 403 },
       )
     }
+    if (profile?.account_role !== 'owner' && profile?.account_role !== 'admin') {
+      return NextResponse.json({ error: 'Admin access is required to sync templates.' }, { status: 403 })
+    }
 
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('*')
-      .eq('account_id', accountId)
-      .single()
-
-    if (configError || !config) {
+    const whatsappNumberId = new URL(request.url).searchParams.get('whatsapp_number_id')
+    let config
+    try {
+      config = await resolveWhatsAppNumber({ supabase, accountId, whatsappNumberId })
+    } catch (error) {
+      if (!(error instanceof WhatsAppNumberError)) throw error
       return NextResponse.json(
-        {
-          error:
-            'WhatsApp not configured. Connect your WhatsApp Business account in Settings first.',
-        },
-        { status: 400 },
+        { error: error.message },
+        { status: error.code === 'not_accessible' ? 403 : 400 },
       )
     }
 
@@ -176,6 +176,9 @@ export async function POST() {
       )
     }
 
+    if (!config.access_token) {
+      return NextResponse.json({ error: 'WhatsApp access token is missing.' }, { status: 400 })
+    }
     const accessToken = decrypt(config.access_token)
 
     const metaTemplates: MetaTemplate[] = []
@@ -238,6 +241,7 @@ export async function POST() {
         // post-017, so an INSERT without it errors.
         account_id: accountId,
         user_id: user.id,
+        waba_id: config.waba_id,
         name: t.name,
         category: normalizeCategory(t.category),
         language: t.language,
@@ -260,6 +264,7 @@ export async function POST() {
         .eq('account_id', accountId)
         .eq('name', t.name)
         .eq('language', t.language)
+        .eq('waba_id', config.waba_id)
         .maybeSingle()
 
       if (lookupErr) {

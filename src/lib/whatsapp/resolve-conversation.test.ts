@@ -12,7 +12,7 @@ import { SendMessageError } from './send-message';
 type ContactRow = { id: string; phone: string; name?: string | null };
 
 interface Script {
-  config?: { user_id: string } | null; // whatsapp_config.maybeSingle
+  config?: { user_id: string } | null; // legacy shorthand for a connected default
   accountOwner?: string; // accounts.maybeSingle fallback audit owner
   contactCandidates?: ContactRow[]; // contacts .like (same every call)
   /** Per-call `.like` results — overrides contactCandidates. Lets a
@@ -47,17 +47,12 @@ function makeDb(script: Script): SupabaseClient {
       return builder;
     },
     eq: () => builder,
+    is: () => builder,
     order: () => builder,
     limit: () => {
-      // Only the conversation lookup terminates on `.limit(1)`.
-      if (table === 'conversations' && mode === 'select') {
-        const row = script.existingConversationByCall
-          ? (script.existingConversationByCall[convLookupCalls] ?? null)
-          : (script.existingConversation ?? null);
-        convLookupCalls++;
-        return Promise.resolve({ data: row ? [row] : [], error: null });
-      }
-      return Promise.resolve({ data: [], error: null });
+      // Supabase query builders stay chainable after `.limit()`; the query
+      // resolves only when awaited through the `then` implementation below.
+      return builder;
     },
     like: () => {
       const data = script.contactCandidatesByCall
@@ -67,12 +62,30 @@ function makeDb(script: Script): SupabaseClient {
       return Promise.resolve({ data, error: null });
     },
     maybeSingle: () => {
-      if (table === 'whatsapp_config')
-        return Promise.resolve({ data: script.config ?? null, error: null });
+      if (table === 'whatsapp_numbers') {
+        return Promise.resolve({
+          data: script.config
+            ? {
+                id: 'number-1',
+                account_id: 'acct',
+                created_by_user_id: script.config.user_id,
+                label: 'Primary',
+                phone_number_id: 'PNID-1',
+                waba_id: 'WABA-1',
+                connection_method: 'cloud_api',
+                access_token: 'enc-token',
+                verify_token: null,
+                status: 'connected',
+                is_default: true,
+              }
+            : null,
+          error: null,
+        });
+      }
       if (table === 'accounts')
         return Promise.resolve({
-          data: script.accountOwner
-            ? { owner_user_id: script.accountOwner }
+          data: script.accountOwner || script.config?.user_id
+            ? { owner_user_id: script.accountOwner ?? script.config?.user_id }
             : null,
           error: null,
         });
@@ -104,8 +117,17 @@ function makeDb(script: Script): SupabaseClient {
       return Promise.resolve({ data: null, error: null });
     },
     // Thenable: `await db.from().update().eq()` lands here.
-    then: (resolve: (v: { data: null; error: null }) => void) =>
-      resolve({ data: null, error: null }),
+    then: (resolve: (v: { data: unknown; error: null }) => void) => {
+      if (table === 'conversations' && mode === 'select') {
+        const row = script.existingConversationByCall
+          ? (script.existingConversationByCall[convLookupCalls] ?? null)
+          : (script.existingConversation ?? null);
+        convLookupCalls++;
+        resolve({ data: row ? [row] : [], error: null });
+        return;
+      }
+      resolve({ data: table === 'whatsapp_numbers' ? [] : null, error: null });
+    },
   };
 
   return {

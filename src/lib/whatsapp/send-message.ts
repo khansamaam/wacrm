@@ -47,6 +47,10 @@ import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard';
 import { renderTemplateBody } from '@/lib/whatsapp/template-render';
 import { buildTemplateMessageSnapshot } from '@/lib/whatsapp/template-message-snapshot';
 import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder';
+import {
+  resolveWhatsAppNumber,
+  WhatsAppNumberError,
+} from '@/lib/whatsapp/numbers';
 
 export const MEDIA_KINDS = ['image', 'video', 'document', 'audio'] as const;
 export const VALID_MESSAGE_TYPES = [
@@ -87,6 +91,8 @@ export interface SendMessageParams {
   /** Structured payload for `messageType === 'interactive'`. */
   interactivePayload?: InteractiveMessagePayload | null;
   replyToMessageId?: string | null;
+  /** Optional for compatibility; an existing conversation is authoritative. */
+  whatsappNumberId?: string | null;
 }
 
 export interface SendMessageResult {
@@ -200,6 +206,7 @@ export async function sendMessageToConversation(
     templateMessageParams,
     interactivePayload,
     replyToMessageId,
+    whatsappNumberId,
   } = params;
 
   if (!conversationId) {
@@ -250,27 +257,38 @@ export async function sendMessageToConversation(
     );
   }
 
-  // WhatsApp config, account-scoped.
-  const { data: config, error: configError } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', accountId)
-    .single();
-
-  if (configError || !config) {
-    throw new SendMessageError(
-      'whatsapp_not_configured',
-      'WhatsApp not configured. Please set up your WhatsApp integration first.',
-      400
-    );
+  let config;
+  try {
+    config = await resolveWhatsAppNumber({
+      supabase: db,
+      accountId,
+      whatsappNumberId,
+      conversationId,
+    });
+  } catch (error) {
+    if (error instanceof WhatsAppNumberError) {
+      throw new SendMessageError(
+        error.code === 'not_connected' ? 'whatsapp_not_connected' : 'whatsapp_not_configured',
+        error.message,
+        error.code === 'not_accessible' ? 403 : 400,
+      );
+    }
+    throw error;
   }
 
+  if (!config.access_token) {
+    throw new SendMessageError(
+      'whatsapp_not_configured',
+      'The selected WhatsApp number has no usable access token.',
+      400,
+    );
+  }
   const accessToken = decrypt(config.access_token);
 
   // Self-heal legacy CBC ciphertexts. Fire-and-forget; idempotent.
   if (isLegacyFormat(config.access_token)) {
     void db
-      .from('whatsapp_config')
+      .from('whatsapp_numbers')
       .update({ access_token: encrypt(accessToken) })
       .eq('id', config.id)
       .then(({ error }: { error: { message: string } | null }) => {
@@ -315,13 +333,16 @@ export async function sendMessageToConversation(
   // guards against a malformed local row crashing the send-builder.
   let templateRow: MessageTemplate | null = null;
   if (messageType === 'template' && templateName) {
-    const { data } = await db
+    let templateQuery = db
       .from('message_templates')
       .select('*')
       .eq('account_id', accountId)
       .eq('name', templateName)
-      .eq('language', templateLanguage || 'en_US')
-      .maybeSingle();
+      .eq('language', templateLanguage || 'en_US');
+    templateQuery = config.waba_id
+      ? templateQuery.eq('waba_id', config.waba_id)
+      : templateQuery.is('waba_id', null);
+    const { data } = await templateQuery.maybeSingle();
     if (data && !isMessageTemplate(data)) {
       throw new SendMessageError(
         'template_malformed',
@@ -491,6 +512,8 @@ export async function sendMessageToConversation(
       message_id: waMessageId,
       status: 'sent',
       reply_to_message_id: replyToMessageId || null,
+      whatsapp_number_id: config.id,
+      message_origin: 'cloud_api',
     })
     .select()
     .single();

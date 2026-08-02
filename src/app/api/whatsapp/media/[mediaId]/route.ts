@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 import { decrypt } from '@/lib/whatsapp/encryption'
+import { resolveWhatsAppNumber, WhatsAppNumberError } from '@/lib/whatsapp/numbers'
 
 export async function GET(
   request: Request,
@@ -48,20 +49,24 @@ export async function GET(
       )
     }
 
-    // Fetch and decrypt WhatsApp config
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('*')
-      .eq('account_id', accountId)
-      .single()
-
-    if (configError || !config) {
+    const selectedNumberId = new URL(request.url).searchParams.get('number')
+    let config
+    try {
+      config = await resolveWhatsAppNumber({
+        supabase,
+        accountId,
+        whatsappNumberId: selectedNumberId,
+      })
+    } catch (error) {
+      if (!(error instanceof WhatsAppNumberError)) throw error
       return NextResponse.json(
-        { error: 'WhatsApp not configured' },
-        { status: 400 }
+        { error: error.message },
+        { status: error.code === 'not_accessible' ? 403 : 400 },
       )
     }
-
+    if (!config.access_token) {
+      return NextResponse.json({ error: 'WhatsApp access token is missing' }, { status: 400 })
+    }
     const accessToken = decrypt(config.access_token)
 
     // Get the download URL from Meta

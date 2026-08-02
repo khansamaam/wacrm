@@ -16,6 +16,7 @@ import {
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
 import { supabaseAdmin } from './admin-client'
+import { resolveWhatsAppNumber } from '@/lib/whatsapp/numbers'
 
 // ------------------------------------------------------------
 // Flows-side Meta sender (interactive variants).
@@ -82,15 +83,12 @@ export async function engineSendText(
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
-  const { data: config, error: configErr } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', args.accountId)
-    .single()
-  if (configErr || !config) {
-    throw new Error('WhatsApp not configured for this account')
-  }
-
+  const config = await resolveWhatsAppNumber({
+    supabase: db,
+    accountId: args.accountId,
+    conversationId: args.conversationId,
+  })
+  if (!config.access_token) throw new Error('WhatsApp access token is missing')
   const accessToken = decrypt(config.access_token)
 
   const attempt = async (phone: string): Promise<string> => {
@@ -133,6 +131,8 @@ export async function engineSendText(
     message_id: waMessageId,
     status: 'sent',
     ai_generated: args.aiGenerated ?? false,
+    whatsapp_number_id: config.id,
+    message_origin: 'cloud_api',
   })
   if (msgErr) {
     throw new Error(`sent to Meta but DB insert failed: ${msgErr.message}`)
@@ -192,15 +192,12 @@ export async function engineSendMedia(
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
-  const { data: config, error: configErr } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', args.accountId)
-    .single()
-  if (configErr || !config) {
-    throw new Error('WhatsApp not configured for this account')
-  }
-
+  const config = await resolveWhatsAppNumber({
+    supabase: db,
+    accountId: args.accountId,
+    conversationId: args.conversationId,
+  })
+  if (!config.access_token) throw new Error('WhatsApp access token is missing')
   const accessToken = decrypt(config.access_token)
 
   const attempt = async (phone: string): Promise<string> => {
@@ -250,6 +247,8 @@ export async function engineSendMedia(
     content_text: args.caption ?? null,
     message_id: waMessageId,
     status: 'sent',
+    whatsapp_number_id: config.id,
+    message_origin: 'cloud_api',
   })
   if (msgErr) {
     throw new Error(`sent to Meta but DB insert failed: ${msgErr.message}`)
@@ -344,15 +343,12 @@ async function sendInteractiveViaMeta(
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
-  const { data: config, error: configErr } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', input.accountId)
-    .single()
-  if (configErr || !config) {
-    throw new Error('WhatsApp not configured for this account')
-  }
-
+  const config = await resolveWhatsAppNumber({
+    supabase: db,
+    accountId: input.accountId,
+    conversationId: input.conversationId,
+  })
+  if (!config.access_token) throw new Error('WhatsApp access token is missing')
   const accessToken = decrypt(config.access_token)
 
   const attempt = async (phone: string): Promise<string> => {
@@ -443,6 +439,8 @@ async function sendInteractiveViaMeta(
     interactive_payload: interactivePayload,
     message_id: waMessageId,
     status: 'sent',
+    whatsapp_number_id: config.id,
+    message_origin: 'cloud_api',
   })
   if (msgErr) {
     throw new Error(`sent to Meta but DB insert failed: ${msgErr.message}`)

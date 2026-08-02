@@ -1,7 +1,8 @@
 import { NextResponse, after } from 'next/server'
+import { createHash } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
-import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
+import { getMediaUrl } from '@/lib/whatsapp/meta-api'
 import { normalizePhone } from '@/lib/whatsapp/phone-utils'
 import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
@@ -87,6 +88,9 @@ interface WhatsAppWebhookEntry {
         recipient_id: string
         errors?: MetaDeliveryError[]
       }>
+      // Coexistence webhook fields carry additional provider-owned shapes.
+      // They are stored durably before the async sync worker interprets them.
+      [key: string]: unknown
     }
     field: string
   }>
@@ -107,9 +111,9 @@ export async function GET(request: Request) {
       )
     }
 
-    // Fetch all whatsapp configs to check verify tokens
+    // Every connected number may carry its own verification token.
     const { data: configs, error: configError } = await supabaseAdmin()
-      .from('whatsapp_config')
+      .from('whatsapp_numbers')
       .select('id, verify_token')
 
     if (configError || !configs) {
@@ -142,7 +146,7 @@ export async function GET(request: Request) {
       // since it's a no-op once the column is already GCM.
       if (isLegacyFormat(matchedConfig.verify_token)) {
         void supabaseAdmin()
-          .from('whatsapp_config')
+          .from('whatsapp_numbers')
           .update({ verify_token: encrypt(verifyToken) })
           .eq('id', matchedConfig.id)
           .then(({ error }: { error: unknown }) => {
@@ -221,6 +225,161 @@ export async function POST(request: Request) {
   return NextResponse.json({ status: 'received' }, { status: 200 })
 }
 
+const COEXISTENCE_WEBHOOK_FIELDS = new Set([
+  'history',
+  'smb_app_state_sync',
+  'smb_message_echoes',
+  'account_update',
+])
+
+function isCoexistenceWebhookField(field: string): boolean {
+  return COEXISTENCE_WEBHOOK_FIELDS.has(field)
+}
+
+interface NumberWebhookConfig {
+  id: string
+  account_id: string
+  created_by_user_id: string
+  access_token: string | null
+  connection_method: 'cloud_api' | 'coexistence'
+}
+
+async function findWhatsAppNumberByPhoneId(
+  phoneNumberId: string,
+): Promise<NumberWebhookConfig | null> {
+  const { data, error } = await supabaseAdmin()
+    .from('whatsapp_numbers')
+    .select('id, account_id, created_by_user_id, access_token, connection_method')
+    .eq('phone_number_id', phoneNumberId)
+    .maybeSingle()
+
+  if (error) {
+    console.error('[webhook] number lookup failed:', phoneNumberId, error)
+    return null
+  }
+  if (!data) return null
+  if (data.created_by_user_id) return data as NumberWebhookConfig
+
+  const { data: account } = await supabaseAdmin()
+    .from('accounts')
+    .select('owner_user_id')
+    .eq('id', data.account_id)
+    .maybeSingle()
+  if (!account?.owner_user_id) return null
+  return { ...data, created_by_user_id: account.owner_user_id } as NumberWebhookConfig
+}
+
+function coexistencePhoneNumberId(value: Record<string, unknown>): string | null {
+  const metadata = value.metadata as { phone_number_id?: unknown } | undefined
+  if (typeof metadata?.phone_number_id === 'string') return metadata.phone_number_id
+  if (typeof value.phone_number_id === 'string') return value.phone_number_id
+  return null
+}
+
+async function ingestCoexistenceEvent(
+  entryId: string,
+  field: string,
+  value: Record<string, unknown>,
+) {
+  const phoneNumberId = coexistencePhoneNumberId(value)
+  let number = phoneNumberId
+    ? await findWhatsAppNumberByPhoneId(phoneNumberId)
+    : null
+
+  // Some account_update payloads identify only the WABA via entry.id.
+  if (!number) {
+    const { data } = await supabaseAdmin()
+      .from('whatsapp_numbers')
+      .select('id, account_id, created_by_user_id, access_token, connection_method')
+      .eq('waba_id', entryId)
+      .eq('connection_method', 'coexistence')
+      .limit(2)
+    if (data?.length === 1) number = data[0] as NumberWebhookConfig
+  }
+
+  if (!number) {
+    console.warn('[webhook] coexistence event has no unique local number:', {
+      field,
+      phoneNumberId,
+      entryId,
+    })
+    return
+  }
+
+  const payload = { entry_id: entryId, field, value }
+  const eventKey = createHash('sha256')
+    .update(JSON.stringify(payload))
+    .digest('hex')
+  const { error } = await supabaseAdmin()
+    .from('whatsapp_webhook_events')
+    .upsert(
+      {
+        whatsapp_number_id: number.id,
+        account_id: number.account_id,
+        event_key: eventKey,
+        event_type: field,
+        payload,
+      },
+      { onConflict: 'whatsapp_number_id,event_key', ignoreDuplicates: true },
+    )
+  if (error) {
+    console.error('[webhook] coexistence event persistence failed:', error)
+    return
+  }
+
+  const now = new Date().toISOString()
+  const eventName = typeof value.event === 'string' ? value.event : null
+  const disconnected =
+    field === 'account_update' &&
+    (eventName === 'PARTNER_REMOVED' || eventName === 'DISABLED_UPDATE')
+
+  const update: Record<string, unknown> = { last_event_at: now }
+  if (field === 'history') update.history_sync_status = 'processing'
+  if (field === 'smb_app_state_sync') update.contacts_sync_status = 'processing'
+  if (disconnected) {
+    update.status = 'disconnected'
+    update.is_default = false
+    update.disconnected_at = now
+  }
+  await supabaseAdmin().from('whatsapp_numbers').update(update).eq('id', number.id)
+
+  // Keep sends deterministic if Meta disconnects the workspace default. A
+  // different connected number is promoted; historical rows remain linked to
+  // the disconnected sender and are never reassigned.
+  if (disconnected) {
+    const { data: current } = await supabaseAdmin()
+      .from('whatsapp_numbers')
+      .select('is_default')
+      .eq('id', number.id)
+      .maybeSingle()
+    if (!current?.is_default) {
+      const { data: existingDefault } = await supabaseAdmin()
+        .from('whatsapp_numbers')
+        .select('id')
+        .eq('account_id', number.account_id)
+        .eq('is_default', true)
+        .maybeSingle()
+      if (!existingDefault) {
+        const { data: replacements } = await supabaseAdmin()
+          .from('whatsapp_numbers')
+          .select('id')
+          .eq('account_id', number.account_id)
+          .eq('status', 'connected')
+          .neq('id', number.id)
+          .order('created_at', { ascending: true })
+          .limit(1)
+        const replacement = replacements?.[0]
+        if (replacement) {
+          await supabaseAdmin()
+            .from('whatsapp_numbers')
+            .update({ is_default: true })
+            .eq('id', replacement.id)
+        }
+      }
+    }
+  }
+}
+
 async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
   if (!body.entry) return
 
@@ -235,61 +394,48 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
         await handleTemplateWebhookChange(
           { field: change.field, value: change.value as unknown },
           supabaseAdmin(),
+          entry.id,
         )
         continue
       }
 
       const value = change.value
+      const phoneNumberId = value.metadata?.phone_number_id
+
+      // Coexistence events can be very large and may arrive out of order.
+      // Store the complete change first; a retry-safe worker processes it
+      // independently of this route's maxDuration.
+      if (isCoexistenceWebhookField(change.field)) {
+        await ingestCoexistenceEvent(entry.id, change.field, value)
+        continue
+      }
+
+      const config = phoneNumberId
+        ? await findWhatsAppNumberByPhoneId(phoneNumberId)
+        : null
 
       // Handle status updates
       if (value.statuses) {
+        if (!config) {
+          console.error('No WhatsApp number found for status metadata:', phoneNumberId)
+          continue
+        }
         for (const status of value.statuses) {
-          await handleStatusUpdate(status)
+          await handleStatusUpdate(status, config.id)
         }
       }
 
       // Handle incoming messages
       if (!value.messages || !value.contacts) continue
 
-      const phoneNumberId = value.metadata.phone_number_id
-
-      // Find user's config by phone_number_id. `.single()` returns
-      // PGRST116 for both 0 rows AND ≥2 rows — distinguish them so
-      // operators see the real cause in logs. ≥2 rows shouldn't happen
-      // post-migration 013 (UNIQUE constraint), but a row created
-      // before the constraint, or a race, would still surface here.
-      const { data: configRows, error: configError } = await supabaseAdmin()
-        .from('whatsapp_config')
-        .select('*')
-        .eq('phone_number_id', phoneNumberId)
-
-      if (configError) {
-        console.error(
-          'Error fetching whatsapp_config for phone_number_id:',
-          phoneNumberId,
-          configError
-        )
-        continue
-      }
-
-      if (!configRows || configRows.length === 0) {
+      if (!config) {
         console.error('No config found for phone_number_id:', phoneNumberId)
         continue
       }
-
-      if (configRows.length > 1) {
-        console.error(
-          `Multiple configs (${configRows.length}) found for phone_number_id:`,
-          phoneNumberId,
-          '— inbound message dropped. Resolve duplicates so each number maps to a single account.',
-          'Account owners:',
-          configRows.map((r: { account_id: string; user_id: string }) => `${r.account_id} (admin ${r.user_id})`)
-        )
+      if (!config.access_token) {
+        console.error('WhatsApp number has no access token:', phoneNumberId)
         continue
       }
-
-      const config = configRows[0]
-
       const decryptedAccessToken = decrypt(config.access_token)
 
       for (let i = 0; i < value.messages.length; i++) {
@@ -305,8 +451,10 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
           // Audit / sender-of-record — used as the user_id on row
           // inserts that need it for NOT NULL FK compliance. Always
           // the admin who saved the WhatsApp config.
-          config.user_id,
-          decryptedAccessToken
+          config.created_by_user_id,
+          decryptedAccessToken,
+          config.id,
+          'cloud_api',
         )
       }
     }
@@ -361,7 +509,7 @@ async function handleStatusUpdate(status: {
   timestamp: string
   recipient_id: string
   errors?: MetaDeliveryError[]
-}) {
+}, whatsappNumberId: string) {
   const deliveryError =
     status.status === 'failed'
       ? parseMetaDeliveryError(status.errors)
@@ -387,6 +535,7 @@ async function handleStatusUpdate(status: {
       delivery_error_message: failureLabel,
     })
     .eq('message_id', status.id)
+    .eq('whatsapp_number_id', whatsappNumberId)
 
   if (msgErr) {
     console.error('Error updating message status:', msgErr)
@@ -404,8 +553,9 @@ async function handleStatusUpdate(status: {
 
   const { data: recipient, error: recFetchErr } = await supabaseAdmin()
     .from('broadcast_recipients')
-    .select('id, status')
+    .select('id, status, broadcasts!inner(whatsapp_number_id)')
     .eq('whatsapp_message_id', status.id)
+    .eq('broadcasts.whatsapp_number_id', whatsappNumberId)
     .maybeSingle()
 
   if (recFetchErr) {
@@ -440,6 +590,7 @@ async function handleStatusUpdate(status: {
     .from('messages')
     .select('conversation_id, conversations(account_id)')
     .eq('message_id', status.id)
+    .eq('whatsapp_number_id', whatsappNumberId)
     .limit(1)
     .maybeSingle()
 
@@ -471,7 +622,11 @@ async function handleStatusUpdate(status: {
  * Runs on a best-effort basis — failures here must not break the
  * main inbound-message flow, so errors are swallowed with a log.
  */
-async function flagBroadcastReplyIfAny(accountId: string, contactId: string) {
+async function flagBroadcastReplyIfAny(
+  accountId: string,
+  contactId: string,
+  whatsappNumberId: string,
+) {
   try {
     // Most recent outbound broadcast in this account that hasn't
     // been replied to yet. Account-scoped so a shared inbox reply
@@ -479,9 +634,10 @@ async function flagBroadcastReplyIfAny(accountId: string, contactId: string) {
     // sent it.
     const { data: recs, error } = await supabaseAdmin()
       .from('broadcast_recipients')
-      .select('id, status, broadcast_id, broadcasts!inner(account_id)')
+      .select('id, status, broadcast_id, broadcasts!inner(account_id, whatsapp_number_id)')
       .eq('contact_id', contactId)
       .eq('broadcasts.account_id', accountId)
+      .eq('broadcasts.whatsapp_number_id', whatsappNumberId)
       .in('status', ['sent', 'delivered', 'read'])
       .order('created_at', { ascending: false })
       .limit(1)
@@ -594,7 +750,9 @@ async function processMessage(
   // (contacts, conversations). Always the admin who saved the
   // WhatsApp config; the choice is arbitrary post-017 but stable.
   configOwnerUserId: string,
-  accessToken: string
+  accessToken: string,
+  whatsappNumberId: string,
+  messageOrigin: 'cloud_api' | 'business_app' | 'history_sync',
 ) {
   const senderPhone = normalizePhone(message.from)
   const contactName = contact.profile.name
@@ -613,7 +771,8 @@ async function processMessage(
   const convResult = await findOrCreateConversation(
     accountId,
     configOwnerUserId,
-    contactRecord.id
+    contactRecord.id,
+    whatsappNumberId,
   )
   if (!convResult) return
   const conversation = convResult.conversation
@@ -626,6 +785,7 @@ async function processMessage(
     await dispatchWebhookEvent(supabaseAdmin(), accountId, 'conversation.created', {
       conversation_id: conversation.id,
       contact_id: contactRecord.id,
+      whatsapp_number_id: whatsappNumberId,
     })
   }
 
@@ -639,7 +799,7 @@ async function processMessage(
 
   // Parse message content based on type
   const { contentText, mediaUrl, mediaType, interactiveReplyId } =
-    await parseMessageContent(message, accessToken)
+    await parseMessageContent(message, accessToken, whatsappNumberId)
 
   // Resolve swipe-reply context if present. A missing parent is fine —
   // we just store NULL and the UI renders the message without a quote.
@@ -706,6 +866,8 @@ async function processMessage(
     // the column; null for every other content_type so existing inserts
     // behave identically.
     interactive_reply_id: interactiveReplyId,
+    whatsapp_number_id: whatsappNumberId,
+    message_origin: messageOrigin,
   })
 
   if (msgError) {
@@ -731,7 +893,7 @@ async function processMessage(
   // If this contact was a recent broadcast recipient, flag the reply
   // so the broadcast's `replied_count` advances (via the aggregate
   // trigger installed in migration 003).
-  await flagBroadcastReplyIfAny(accountId, contactRecord.id)
+  await flagBroadcastReplyIfAny(accountId, contactRecord.id, whatsappNumberId)
 
   // ============================================================
   // Flow runner dispatch.
@@ -854,7 +1016,8 @@ async function processMessage(
 
 async function parseMessageContent(
   message: WhatsAppMessage,
-  accessToken: string
+  accessToken: string,
+  whatsappNumberId: string,
 ): Promise<{
   contentText: string | null
   mediaUrl: string | null
@@ -877,7 +1040,7 @@ async function parseMessageContent(
   ): Promise<string | null> => {
     try {
       await getMediaUrl({ mediaId, accessToken })
-      return `/api/whatsapp/media/${mediaId}`
+      return `/api/whatsapp/media/${mediaId}?number=${encodeURIComponent(whatsappNumberId)}`
     } catch (error) {
       console.error(
         `Failed to verify media ${mediaId} with Meta:`,
@@ -1071,6 +1234,7 @@ async function findOrCreateConversation(
   accountId: string,
   configOwnerUserId: string,
   contactId: string,
+  whatsappNumberId: string,
 ) {
   // Look for an existing conversation in this account, oldest-first.
   //
@@ -1090,6 +1254,7 @@ async function findOrCreateConversation(
     .select('*')
     .eq('account_id', accountId)
     .eq('contact_id', contactId)
+    .eq('whatsapp_number_id', whatsappNumberId)
     .order('created_at', { ascending: true })
     .limit(1)
 
@@ -1110,6 +1275,7 @@ async function findOrCreateConversation(
       account_id: accountId,
       user_id: configOwnerUserId,
       contact_id: contactId,
+      whatsapp_number_id: whatsappNumberId,
     })
     .select()
     .single()
@@ -1125,6 +1291,7 @@ async function findOrCreateConversation(
         .select('*')
         .eq('account_id', accountId)
         .eq('contact_id', contactId)
+        .eq('whatsapp_number_id', whatsappNumberId)
         .order('created_at', { ascending: true })
         .limit(1)
       if (raced && raced.length > 0) {

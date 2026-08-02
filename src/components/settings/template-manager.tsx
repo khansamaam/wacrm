@@ -25,6 +25,8 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { useTranslations } from 'next-intl';
+import { useWhatsAppNumbers } from '@/hooks/use-whatsapp-numbers';
+import { WhatsAppNumberFilter } from '@/components/whatsapp/number-filter';
 import { Card, CardContent } from '@/components/ui/card';
 import { SettingsPanelHead } from './settings-panel-head';
 import {
@@ -164,7 +166,10 @@ async function readTemplateApiResponse(
 export function TemplateManager() {
   const t = useTranslations('Settings.templates');
   const supabase = createClient();
-  const { user, loading: authLoading } = useAuth();
+  const { user, accountId, canEditSettings, loading: authLoading } = useAuth();
+  const { numbers, selectedNumberId, setSelectedNumberId } = useWhatsAppNumbers();
+  const templateNumberId = selectedNumberId ?? numbers.find((number) => number.is_default)?.id ?? numbers[0]?.id ?? null;
+  const templateWabaId = numbers.find((number) => number.id === templateNumberId)?.waba_id ?? null;
 
   const [loading, setLoading] = useState(true);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
@@ -220,18 +225,20 @@ export function TemplateManager() {
       setLoading(false);
       return;
     }
-    fetchTemplates(user.id);
+    fetchTemplates();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authLoading, user?.id]);
+  }, [authLoading, user?.id, accountId, templateWabaId]);
 
-  async function fetchTemplates(userId: string) {
+  async function fetchTemplates() {
     try {
       setLoading(true);
-      const { data, error } = await supabase
+      let query = supabase
         .from('message_templates')
         .select('*')
-        .eq('user_id', userId)
         .order('created_at', { ascending: false });
+      if (accountId) query = query.eq('account_id', accountId);
+      if (templateWabaId) query = query.eq('waba_id', templateWabaId);
+      const { data, error } = await query;
       if (error) throw error;
       setTemplates(data || []);
     } catch (err) {
@@ -267,6 +274,7 @@ export function TemplateManager() {
       buttons: form.buttons.length > 0 ? form.buttons : undefined,
       sample_values:
         Object.keys(sample_values).length > 0 ? sample_values : undefined,
+      whatsapp_number_id: templateNumberId,
     };
   }
 
@@ -318,7 +326,7 @@ export function TemplateManager() {
       }
       // Refresh first, then close — re-opening the dialog
       // immediately should not show a stale list.
-      if (user) await fetchTemplates(user.id);
+      if (user) await fetchTemplates();
       toast.success(
         data.dry_run
           ? isEdit
@@ -343,7 +351,8 @@ export function TemplateManager() {
     if (!user) return;
     setSyncing(true);
     try {
-      const res = await fetch('/api/whatsapp/templates/sync', { method: 'POST' });
+      if (!templateNumberId) throw new Error('Connect a WhatsApp number before syncing templates');
+      const res = await fetch(`/api/whatsapp/templates/sync?whatsapp_number_id=${encodeURIComponent(templateNumberId)}`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data?.error || `Sync failed (HTTP ${res.status})`);
@@ -372,7 +381,7 @@ export function TemplateManager() {
           { duration: 10000 },
         );
       }
-      await fetchTemplates(user.id);
+      await fetchTemplates();
     } catch (err) {
       console.error('Template sync error:', err);
       toast.error(err instanceof Error ? err.message : t('toastSyncError'));
@@ -525,7 +534,9 @@ export function TemplateManager() {
         title={t('title')}
         description={t('description')}
         action={
+          canEditSettings ? (
           <div className="flex items-center gap-2">
+            <WhatsAppNumberFilter numbers={numbers} value={templateNumberId} onChange={setSelectedNumberId} allowAll={false} />
             <Button
               variant="outline"
               onClick={handleSyncFromMeta}
@@ -540,6 +551,7 @@ export function TemplateManager() {
               {t('newTemplate')}
             </Button>
           </div>
+          ) : null
         }
       />
 
@@ -608,7 +620,7 @@ export function TemplateManager() {
                       </div>
                     )}
                   </div>
-                  <div className="flex items-center gap-1 shrink-0 ml-2">
+                  {canEditSettings && <div className="flex items-center gap-1 shrink-0 ml-2">
                     {statusKey === 'APPROVED' && (
                       <Button
                         variant="ghost"
@@ -658,7 +670,7 @@ export function TemplateManager() {
                         <Trash2 className="size-4" />
                       )}
                     </Button>
-                  </div>
+                  </div>}
                 </CardContent>
               </Card>
             );

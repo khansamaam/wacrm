@@ -10,6 +10,8 @@ export interface WhatsAppConnectionStatus {
   connected: boolean
   phoneNumber: string | null
   numberKind: 'display' | 'id' | null
+  connectedCount: number
+  totalCount: number
 }
 
 const INITIAL_STATUS: WhatsAppConnectionStatus = {
@@ -18,6 +20,8 @@ const INITIAL_STATUS: WhatsAppConnectionStatus = {
   connected: false,
   phoneNumber: null,
   numberKind: null,
+  connectedCount: 0,
+  totalCount: 0,
 }
 
 /**
@@ -34,18 +38,31 @@ export function useWhatsAppConnectionStatus(
     if (!accountId) return
 
     try {
-      const response = await fetch('/api/whatsapp/status', {
+      const response = await fetch('/api/whatsapp/numbers', {
         cache: 'no-store',
       })
       if (!response.ok) {
         throw new Error(`Status request failed: ${response.status}`)
       }
 
-      const payload = (await response.json()) as Omit<
-        WhatsAppConnectionStatus,
-        'loading'
-      >
-      setStatus({ ...payload, loading: false })
+      const payload = (await response.json()) as { numbers?: Array<{
+        display_phone_number?: string | null
+        phone_number_id: string
+        status: string
+        is_default: boolean
+      }> }
+      const numbers = payload.numbers ?? []
+      const connected = numbers.filter((number) => number.status === 'connected')
+      const primary = connected.find((number) => number.is_default) ?? connected[0] ?? numbers[0]
+      setStatus({
+        loading: false,
+        configured: numbers.length > 0,
+        connected: connected.length > 0,
+        connectedCount: connected.length,
+        totalCount: numbers.length,
+        phoneNumber: primary?.display_phone_number || primary?.phone_number_id || null,
+        numberKind: primary?.display_phone_number ? 'display' : primary ? 'id' : null,
+      })
     } catch (error) {
       console.warn('[sidebar] Could not load WhatsApp status:', error)
       setStatus((current) => ({ ...current, loading: false }))
@@ -65,7 +82,7 @@ export function useWhatsAppConnectionStatus(
         {
           event: '*',
           schema: 'public',
-          table: 'whatsapp_config',
+          table: 'whatsapp_numbers',
           filter: `account_id=eq.${accountId}`,
         },
         () => void refresh()

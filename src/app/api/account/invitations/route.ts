@@ -143,7 +143,7 @@ export async function GET() {
     const { data, error } = await ctx.supabase
       .from("account_invitations")
       .select(
-        "id, role, label, created_by_user_id, created_at, expires_at, accepted_at, accepted_by_user_id",
+        "id, role, label, created_by_user_id, created_at, expires_at, accepted_at, accepted_by_user_id, whatsapp_number_access_mode",
       )
       .eq("account_id", ctx.accountId)
       .is("accepted_at", null)
@@ -179,7 +179,7 @@ export async function POST(request: Request) {
     if (!limit.success) return rateLimitResponse(limit);
 
     const body = (await request.json().catch(() => null)) as
-      | { role?: unknown; expiresInDays?: unknown; label?: unknown }
+      | { role?: unknown; expiresInDays?: unknown; label?: unknown; whatsappNumberAccessMode?: unknown; whatsappNumberIds?: unknown }
       | null;
 
     const role = body?.role;
@@ -201,6 +201,23 @@ export async function POST(request: Request) {
       typeof expiresInDaysRaw === "number" ? expiresInDaysRaw : undefined;
     const expiryDays = clampExpiryDays(expiresInDays);
     const expiresAt = inviteExpiresAt(expiryDays);
+    const accessMode = body?.whatsappNumberAccessMode === 'selected' ? 'selected' : 'all';
+    const numberIds = Array.isArray(body?.whatsappNumberIds)
+      ? body.whatsappNumberIds.filter((id): id is string => typeof id === 'string')
+      : [];
+    if (accessMode === 'selected' && numberIds.length === 0) {
+      return NextResponse.json({ error: 'Select at least one WhatsApp number' }, { status: 400 });
+    }
+    if (numberIds.length > 0) {
+      const { count, error: numberError } = await ctx.supabase
+        .from('whatsapp_numbers')
+        .select('id', { count: 'exact', head: true })
+        .eq('account_id', ctx.accountId)
+        .in('id', numberIds);
+      if (numberError || count !== new Set(numberIds).size) {
+        return NextResponse.json({ error: 'One or more selected numbers are invalid' }, { status: 400 });
+      }
+    }
 
     let label: string | null = null;
     if (typeof body?.label === "string") {
@@ -225,6 +242,7 @@ export async function POST(request: Request) {
         created_by_user_id: ctx.userId,
         label,
         expires_at: expiresAt.toISOString(),
+        whatsapp_number_access_mode: accessMode,
       })
       .select("id, role, label, expires_at, created_at")
       .single();
@@ -235,6 +253,20 @@ export async function POST(request: Request) {
         { error: "Failed to create invitation" },
         { status: 500 },
       );
+    }
+
+    if (accessMode === 'selected') {
+      const { error: assignmentError } = await ctx.supabase
+        .from('whatsapp_invitation_number_access')
+        .insert([...new Set(numberIds)].map((whatsappNumberId) => ({
+          invitation_id: data.id,
+          whatsapp_number_id: whatsappNumberId,
+        })));
+      if (assignmentError) {
+        await ctx.supabase.from('account_invitations').delete().eq('id', data.id);
+        console.error('[POST /api/account/invitations] number assignment failed:', assignmentError);
+        return NextResponse.json({ error: 'Failed to assign WhatsApp numbers to invitation' }, { status: 500 });
+      }
     }
 
     return NextResponse.json(

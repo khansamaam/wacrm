@@ -31,6 +31,7 @@ import {
   Plus,
   Trash2,
   UsersRound,
+  SlidersHorizontal,
 } from 'lucide-react';
 
 import {
@@ -75,6 +76,8 @@ import {
 import { InviteMemberDialog } from './invite-member-dialog';
 import { SettingsPanelHead } from './settings-panel-head';
 import { ROLE_META } from './role-meta';
+import { Checkbox } from '@/components/ui/checkbox';
+import { useWhatsAppNumbers } from '@/hooks/use-whatsapp-numbers';
 
 interface Member {
   user_id: string;
@@ -83,6 +86,8 @@ interface Member {
   avatar_url: string | null;
   role: AccountRole;
   joined_at: string;
+  whatsapp_number_access_mode: 'all' | 'selected';
+  whatsapp_number_ids: string[];
 }
 
 interface Invitation {
@@ -129,6 +134,7 @@ export function MembersTab() {
   const tRoles = useTranslations('Settings.roles');
   const { user, canManageMembers } = useAuth();
   const { getPresence, getRow, now } = usePresence();
+  const { numbers } = useWhatsAppNumbers();
 
   const [members, setMembers] = useState<Member[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
@@ -139,6 +145,9 @@ export function MembersTab() {
   const [pendingMemberAction, setPendingMemberAction] = useState<string | null>(
     null,
   );
+  const [accessMember, setAccessMember] = useState<Member | null>(null);
+  const [accessMode, setAccessMode] = useState<'all' | 'selected'>('all');
+  const [accessNumberIds, setAccessNumberIds] = useState<string[]>([]);
 
   const loadEverything = useCallback(async () => {
     try {
@@ -269,6 +278,39 @@ export function MembersTab() {
     } catch (err) {
       console.error('[MembersTab] revoke error:', err);
       toast.error('Could not reach the server');
+    }
+  }
+
+  function openNumberAccess(member: Member) {
+    setAccessMember(member);
+    setAccessMode(member.whatsapp_number_access_mode || 'all');
+    setAccessNumberIds(member.whatsapp_number_ids || []);
+  }
+
+  async function saveNumberAccess() {
+    if (!accessMember) return;
+    if (accessMode === 'selected' && accessNumberIds.length === 0) {
+      toast.error('Select at least one WhatsApp number');
+      return;
+    }
+    setPendingMemberAction(accessMember.user_id);
+    try {
+      const response = await fetch(`/api/account/members/${accessMember.user_id}/whatsapp-numbers`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ access_mode: accessMode, whatsapp_number_ids: accessNumberIds }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'Failed to update number access');
+      setMembers((current) => current.map((member) => member.user_id === accessMember.user_id
+        ? { ...member, whatsapp_number_access_mode: accessMode, whatsapp_number_ids: accessMode === 'all' ? [] : accessNumberIds }
+        : member));
+      setAccessMember(null);
+      toast.success('WhatsApp number access updated');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to update number access');
+    } finally {
+      setPendingMemberAction(null);
     }
   }
 
@@ -458,6 +500,17 @@ export function MembersTab() {
                       <Button
                         variant="outline"
                         size="sm"
+                        onClick={() => openNumberAccess(member)}
+                        disabled={isBusy || numbers.length === 0}
+                        title="WhatsApp number access"
+                      >
+                        <SlidersHorizontal className="size-4" />
+                      </Button>
+                    )}
+                    {canManageMembers && !isOwnerRow && !isSelf && (
+                      <Button
+                        variant="outline"
+                        size="sm"
                         onClick={() => setRemovingMember(member)}
                         disabled={isBusy}
                         className="border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20 hover:border-red-500/60 hover:text-red-200"
@@ -606,6 +659,48 @@ export function MembersTab() {
               ) : (
                 t('removeBtn')
               )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={accessMember !== null} onOpenChange={(open) => { if (!open) setAccessMember(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>WhatsApp number access</DialogTitle>
+            <DialogDescription>
+              Choose which business numbers {accessMember?.full_name || 'this member'} can view and use.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <Select value={accessMode} onValueChange={(value) => value && setAccessMode(value as 'all' | 'selected')}>
+              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All current and future numbers</SelectItem>
+                <SelectItem value="selected">Selected numbers only</SelectItem>
+              </SelectContent>
+            </Select>
+            {accessMode === 'selected' && (
+              <div className="space-y-2 rounded-lg border p-3">
+                {numbers.map((number) => (
+                  <label key={number.id} className="flex cursor-pointer items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={accessNumberIds.includes(number.id)}
+                      onCheckedChange={(checked) => setAccessNumberIds((current) => checked
+                        ? [...new Set([...current, number.id])]
+                        : current.filter((id) => id !== number.id))}
+                    />
+                    <span>{number.label}</span>
+                    <span className="text-muted-foreground">{number.display_phone_number || number.phone_number_id}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAccessMember(null)}>Cancel</Button>
+            <Button disabled={Boolean(pendingMemberAction)} onClick={() => void saveNumberAccess()}>
+              {pendingMemberAction && <Loader2 className="size-4 animate-spin" />}Save access
             </Button>
           </DialogFooter>
         </DialogContent>

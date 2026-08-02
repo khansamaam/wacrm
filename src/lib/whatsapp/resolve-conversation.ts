@@ -24,6 +24,7 @@ import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
 import { SendMessageError } from '@/lib/whatsapp/send-message';
 import { resolveAuditUserId, ContactError } from '@/lib/api/v1/contacts';
+import { resolveWhatsAppNumber, WhatsAppNumberError } from '@/lib/whatsapp/numbers';
 
 export interface ResolvedConversation {
   conversationId: string;
@@ -38,6 +39,8 @@ export interface ResolveConversationOptions {
    * Meta already accepted does not, so sync callers can skip that check.
    */
   requireWhatsAppConfig?: boolean;
+  /** Sender number for a new thread. Omit to use the workspace default. */
+  whatsappNumberId?: string | null;
 }
 
 /**
@@ -63,18 +66,34 @@ export async function resolveConversationByPhone(
   }
 
   if (options.requireWhatsAppConfig !== false) {
-    // Fail before creating contact data when this helper is used for a send.
-    const { data: config } = await db
-      .from('whatsapp_config')
-      .select('id')
-      .eq('account_id', accountId)
-      .maybeSingle();
-    if (!config) {
+    try {
+      await resolveWhatsAppNumber({
+        supabase: db,
+        accountId,
+        whatsappNumberId: options.whatsappNumberId,
+      });
+    } catch (error) {
+      if (!(error instanceof WhatsAppNumberError)) throw error;
       throw new SendMessageError(
         'whatsapp_not_configured',
-        'WhatsApp not configured. Please set up your WhatsApp integration first.',
-        400
+        error.message,
+        error.code === 'not_accessible' ? 403 : 400,
       );
+    }
+  }
+
+  let resolvedNumberId = options.whatsappNumberId ?? null;
+  if (!resolvedNumberId) {
+    try {
+      const number = await resolveWhatsAppNumber({
+        supabase: db,
+        accountId,
+        requireConnected: options.requireWhatsAppConfig !== false,
+      });
+      resolvedNumberId = number.id;
+    } catch (error) {
+      if (options.requireWhatsAppConfig !== false) throw error;
+      // External imports may intentionally create an unnumbered legacy thread.
     }
   }
 
@@ -156,7 +175,8 @@ export async function resolveConversationByPhone(
     db,
     accountId,
     contactId,
-    ownerUserId
+    ownerUserId,
+    resolvedNumberId,
   );
 
   return { conversationId, contactId, contactCreated };
@@ -172,15 +192,20 @@ async function findOrCreateConversationRow(
   db: SupabaseClient,
   accountId: string,
   contactId: string,
-  ownerUserId: string
+  ownerUserId: string,
+  whatsappNumberId: string | null,
 ): Promise<string> {
-  const { data: existing, error: findErr } = await db
+  let existingQuery = db
     .from('conversations')
     .select('id')
     .eq('account_id', accountId)
     .eq('contact_id', contactId)
     .order('created_at', { ascending: true })
     .limit(1);
+  existingQuery = whatsappNumberId
+    ? existingQuery.eq('whatsapp_number_id', whatsappNumberId)
+    : existingQuery.is('whatsapp_number_id', null);
+  const { data: existing, error: findErr } = await existingQuery;
 
   if (findErr) {
     console.error('[resolve-conversation] conversation lookup error:', findErr);
@@ -201,19 +226,24 @@ async function findOrCreateConversationRow(
       account_id: accountId,
       user_id: ownerUserId,
       contact_id: contactId,
+      whatsapp_number_id: whatsappNumberId,
     })
     .select('id')
     .single();
 
   if (convErr || !newConv) {
     if (isUniqueViolation(convErr)) {
-      const { data: raced } = await db
+      let racedQuery = db
         .from('conversations')
         .select('id')
         .eq('account_id', accountId)
         .eq('contact_id', contactId)
         .order('created_at', { ascending: true })
         .limit(1);
+      racedQuery = whatsappNumberId
+        ? racedQuery.eq('whatsapp_number_id', whatsappNumberId)
+        : racedQuery.is('whatsapp_number_id', null);
+      const { data: raced } = await racedQuery;
       if (raced && raced.length > 0) {
         return raced[0].id;
       }
