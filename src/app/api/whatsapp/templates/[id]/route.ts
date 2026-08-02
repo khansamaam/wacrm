@@ -69,7 +69,7 @@ export async function PATCH(
     // lookups work for teammates who didn't author the row.
     const { data: profile } = await supabase
       .from('profiles')
-      .select('account_id')
+      .select('account_id, account_role')
       .eq('user_id', user.id)
       .maybeSingle()
     const accountId = profile?.account_id as string | undefined
@@ -78,6 +78,9 @@ export async function PATCH(
         { error: 'Your profile is not linked to an account.' },
         { status: 403 },
       )
+    }
+    if (profile?.account_role !== 'owner' && profile?.account_role !== 'admin') {
+      return NextResponse.json({ error: 'Admin access is required to edit templates.' }, { status: 403 })
     }
 
     let payload: TemplatePayload
@@ -91,7 +94,7 @@ export async function PATCH(
     // meta_template_id and status — fetch explicitly.
     const { data: existing, error: lookupErr } = await supabase
       .from('message_templates')
-      .select('id, name, status, meta_template_id, language')
+      .select('id, name, status, meta_template_id, language, waba_id')
       .eq('id', id)
       .eq('account_id', accountId)
       .maybeSingle()
@@ -139,15 +142,21 @@ export async function PATCH(
 
     if (!isDryRun()) {
       const { data: config, error: configError } = await supabase
-        .from('whatsapp_config')
-        .select('*')
+        .from('whatsapp_numbers')
+        .select('access_token')
         .eq('account_id', accountId)
-        .single()
+        .eq('waba_id', existing.waba_id)
+        .eq('status', 'connected')
+        .limit(1)
+        .maybeSingle()
       if (configError || !config) {
         return NextResponse.json(
           { error: 'WhatsApp not configured.' },
           { status: 400 },
         )
+      }
+      if (!config.access_token) {
+        return NextResponse.json({ error: 'WhatsApp access token is missing.' }, { status: 400 })
       }
       const accessToken = decrypt(config.access_token)
 
@@ -257,7 +266,7 @@ export async function DELETE(
     // the shared whatsapp_config.
     const { data: profile } = await supabase
       .from('profiles')
-      .select('account_id')
+      .select('account_id, account_role')
       .eq('user_id', user.id)
       .maybeSingle()
     const accountId = profile?.account_id as string | undefined
@@ -267,10 +276,13 @@ export async function DELETE(
         { status: 403 },
       )
     }
+    if (profile?.account_role !== 'owner' && profile?.account_role !== 'admin') {
+      return NextResponse.json({ error: 'Admin access is required to delete templates.' }, { status: 403 })
+    }
 
     const { data: existing, error: lookupErr } = await supabase
       .from('message_templates')
-      .select('id, name, meta_template_id')
+      .select('id, name, meta_template_id, waba_id')
       .eq('id', id)
       .eq('account_id', accountId)
       .maybeSingle()
@@ -280,15 +292,21 @@ export async function DELETE(
 
     if (existing.meta_template_id && !isDryRun()) {
       const { data: config, error: configError } = await supabase
-        .from('whatsapp_config')
-        .select('*')
+        .from('whatsapp_numbers')
+        .select('waba_id, access_token')
         .eq('account_id', accountId)
-        .single()
+        .eq('waba_id', existing.waba_id)
+        .eq('status', 'connected')
+        .limit(1)
+        .maybeSingle()
       if (configError || !config || !config.waba_id) {
         return NextResponse.json(
           { error: 'WhatsApp not configured — cannot delete on Meta.' },
           { status: 400 },
         )
+      }
+      if (!config.access_token) {
+        return NextResponse.json({ error: 'WhatsApp access token is missing.' }, { status: 400 })
       }
       const accessToken = decrypt(config.access_token)
       try {

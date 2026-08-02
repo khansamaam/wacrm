@@ -18,6 +18,8 @@ import { useCan } from '@/hooks/use-can';
 import { GatedButton } from '@/components/ui/gated-button';
 import { getBroadcastStatus } from '@/lib/broadcast-status';
 import { useTranslations } from 'next-intl';
+import { useWhatsAppNumbers } from '@/hooks/use-whatsapp-numbers';
+import { WhatsAppNumberFilter } from '@/components/whatsapp/number-filter';
 
 /**
  * Poll cadence while any broadcast is sending. Kept modest so we don't
@@ -62,6 +64,7 @@ export default function BroadcastsPage() {
   const t = useTranslations('Broadcasts.page');
   const tStatus = useTranslations('Broadcasts.status');
   const canCreate = useCan('send-messages');
+  const { numbers, selectedNumberId, setSelectedNumberId } = useWhatsAppNumbers();
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -72,10 +75,12 @@ export default function BroadcastsPage() {
   async function fetchBroadcasts() {
     try {
       const supabase = createClient();
-      const { data, error: fetchError } = await supabase
+      let query = supabase
         .from('broadcasts')
         .select('*')
         .order('created_at', { ascending: false });
+      if (selectedNumberId) query = query.eq('whatsapp_number_id', selectedNumberId)
+      const { data, error: fetchError } = await query
 
       if (fetchError) throw fetchError;
       setBroadcasts(data ?? []);
@@ -88,7 +93,7 @@ export default function BroadcastsPage() {
 
   useEffect(() => {
     fetchBroadcasts();
-  }, []);
+  }, [selectedNumberId]);
 
   const anySending = useMemo(
     () => broadcasts.some((b) => b.status === 'sending'),
@@ -187,6 +192,8 @@ export default function BroadcastsPage() {
             {t('subtitle')}
           </p>
         </div>
+        <div className="flex items-center gap-2">
+        <WhatsAppNumberFilter numbers={numbers} value={selectedNumberId} onChange={setSelectedNumberId} />
         <GatedButton
           canAct={canCreate}
           gateReason="create broadcasts"
@@ -196,6 +203,7 @@ export default function BroadcastsPage() {
           <Plus className="h-4 w-4" />
           {t('newBroadcast')}
         </GatedButton>
+        </div>
       </div>
 
       {broadcasts.length === 0 ? (

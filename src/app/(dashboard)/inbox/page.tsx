@@ -13,9 +13,10 @@ import { useRealtime } from "@/hooks/use-realtime";
 import { ConversationList } from "@/components/inbox/conversation-list";
 import { MessageThread } from "@/components/inbox/message-thread";
 import { ContactSidebar } from "@/components/inbox/contact-sidebar";
-import { toast } from "sonner";
 import { WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useWhatsAppNumbers } from '@/hooks/use-whatsapp-numbers';
+import { WhatsAppNumberFilter } from '@/components/whatsapp/number-filter';
 
 // Remembers the agent's show/hide choice for the desktop contact panel
 // across reloads and sessions (device-scoped, like the theme prefs).
@@ -36,6 +37,7 @@ function InboxPageInner() {
   const t = useTranslations("Inbox.page");
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { numbers, selectedNumberId, setSelectedNumberId } = useWhatsAppNumbers();
   /**
    * `?c=<id>` deep-link support. Used when landing here from the
    * dashboard's recent-conversations list so the right thread opens
@@ -151,6 +153,7 @@ function InboxPageInner() {
       }
       if (!data) return;
       const fetched = normalizeConversation(data);
+      if (selectedNumberId && fetched.whatsapp_number_id !== selectedNumberId) return;
       setConversations((prev) => {
         const existing = prev.find((c) => c.id === fetched.id);
         if (existing) {
@@ -170,7 +173,7 @@ function InboxPageInner() {
     } finally {
       hydratingConvIdsRef.current.delete(convId);
     }
-  }, []);
+  }, [selectedNumberId]);
 
   // Check WhatsApp connection status on mount
   useEffect(() => {
@@ -200,13 +203,13 @@ function InboxPageInner() {
         return;
       }
 
-      const { data } = await supabase
-        .from("whatsapp_config")
-        .select("status")
+      const { count } = await supabase
+        .from("whatsapp_numbers")
+        .select("id", { count: 'exact', head: true })
         .eq("account_id", accountId)
-        .maybeSingle();
+        .eq("status", "connected");
 
-      setWhatsappConnected(data?.status === "connected");
+      setWhatsappConnected((count ?? 0) > 0);
     };
 
     checkConnection();
@@ -216,6 +219,7 @@ function InboxPageInner() {
   const handleMessageEvent = useCallback(
     (event: { eventType: string; new: Message; old: Partial<Message> }) => {
       const newMsg = event.new;
+      if (selectedNumberId && newMsg.whatsapp_number_id !== selectedNumberId) return;
 
       if (event.eventType === "INSERT") {
         // Add to messages if it belongs to active conversation
@@ -272,7 +276,7 @@ function InboxPageInner() {
         );
       }
     },
-    [activeConversation, hydrateConversation]
+    [activeConversation, hydrateConversation, selectedNumberId]
   );
 
   // Handle realtime conversation events
@@ -283,6 +287,7 @@ function InboxPageInner() {
       old: Partial<Conversation>;
     }) => {
       const conv = event.new;
+      if (selectedNumberId && conv.whatsapp_number_id !== selectedNumberId) return;
 
       if (event.eventType === "INSERT") {
         // Prepend immediately for snappy UX so the new conv shows in the
@@ -334,7 +339,7 @@ function InboxPageInner() {
         }
       }
     },
-    [activeConversation, hydrateConversation]
+    [activeConversation, hydrateConversation, selectedNumberId]
   );
 
   // Subscribe to realtime. The `isConnected` flag below feeds the
@@ -563,6 +568,16 @@ function InboxPageInner() {
 
   return (
     <div className="-m-4 flex h-[calc(100vh-3.5rem)] flex-col overflow-hidden sm:-m-6">
+      {numbers.length > 1 && (
+        <div className="flex shrink-0 justify-end border-b bg-background px-3 py-2">
+          <WhatsAppNumberFilter numbers={numbers} value={selectedNumberId} onChange={(value) => {
+            setSelectedNumberId(value);
+            setActiveConversation(null);
+            setActiveContact(null);
+            setMessages([]);
+          }} />
+        </div>
+      )}
       {/* WhatsApp connection banner — in the flex column, not absolute,
           so it pushes the panels down instead of overlapping them. */}
       {whatsappConnected === false && (
@@ -590,6 +605,7 @@ function InboxPageInner() {
             conversations={conversations}
             onConversationsLoaded={handleConversationsLoaded}
             resyncToken={resyncToken}
+            whatsappNumberId={selectedNumberId}
           />
         </div>
 

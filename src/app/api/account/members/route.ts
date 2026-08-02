@@ -16,7 +16,6 @@ import { NextResponse } from "next/server";
 
 import { getCurrentAccount, toErrorResponse } from "@/lib/auth/account";
 import { canManageMembers, isAccountRole } from "@/lib/auth/roles";
-import type { AccountMember } from "@/types";
 
 interface ProfileRow {
   user_id: string;
@@ -25,6 +24,7 @@ interface ProfileRow {
   avatar_url: string | null;
   account_role: string;
   created_at: string;
+  whatsapp_number_access_mode: 'all' | 'selected';
 }
 
 export async function GET() {
@@ -35,7 +35,7 @@ export async function GET() {
     // the caller's, so this query is naturally account-scoped.
     const { data, error } = await ctx.supabase
       .from("profiles")
-      .select("user_id, full_name, email, avatar_url, account_role, created_at")
+      .select("user_id, full_name, email, avatar_url, account_role, created_at, whatsapp_number_access_mode")
       .eq("account_id", ctx.accountId)
       .order("created_at", { ascending: true });
 
@@ -49,7 +49,21 @@ export async function GET() {
 
     const canSeeEmails = canManageMembers(ctx.role);
 
-    const members: AccountMember[] = (data as ProfileRow[]).flatMap((row) => {
+    const { data: assignments, error: assignmentError } = await ctx.supabase
+      .from('whatsapp_number_members')
+      .select('user_id, whatsapp_number_id')
+      .eq('account_id', ctx.accountId);
+    if (assignmentError) {
+      return NextResponse.json({ error: 'Failed to load number assignments' }, { status: 500 });
+    }
+    const assignedByUser = new Map<string, string[]>();
+    for (const assignment of assignments ?? []) {
+      const list = assignedByUser.get(assignment.user_id) ?? [];
+      list.push(assignment.whatsapp_number_id);
+      assignedByUser.set(assignment.user_id, list);
+    }
+
+    const members = (data as ProfileRow[]).flatMap((row) => {
       // Defensive: the DB enum should never let an unknown role
       // through, but if a migration ever broadens the enum without
       // updating TS, skip the row rather than crash the page.
@@ -62,6 +76,8 @@ export async function GET() {
           avatar_url: row.avatar_url,
           role: row.account_role,
           joined_at: row.created_at,
+          whatsapp_number_access_mode: row.account_role === 'owner' ? 'all' : row.whatsapp_number_access_mode,
+          whatsapp_number_ids: assignedByUser.get(row.user_id) ?? [],
         },
       ];
     });

@@ -59,6 +59,7 @@ export function WhatsAppConnectionCard({
             )}
           />
           {stateLabel}
+          {status.connectedCount > 1 ? ` · +${status.connectedCount - 1}` : null}
           {status.numberKind === 'id' ? ` · ${t('whatsappPhoneId')}` : null}
         </span>
       </span>

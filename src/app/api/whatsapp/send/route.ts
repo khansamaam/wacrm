@@ -10,6 +10,7 @@ import {
   validateSendMessageParams,
   SendMessageError,
 } from '@/lib/whatsapp/send-message'
+import { resolveWhatsAppNumber, WhatsAppNumberError } from '@/lib/whatsapp/numbers'
 
 // The dashboard's outbound-send endpoint. It owns auth, per-user rate
 // limiting, and the two ways the UI targets a thread — an existing
@@ -77,6 +78,7 @@ export async function POST(request: Request) {
       template_message_params,
       interactive_payload,
       reply_to_message_id,
+      whatsapp_number_id,
     } = body
 
     if ((!conversationIdInput && !contact_id) || !message_type) {
@@ -145,11 +147,29 @@ export async function POST(request: Request) {
         )
       }
 
+      let selectedNumberId: string
+      try {
+        selectedNumberId = (
+          await resolveWhatsAppNumber({
+            supabase,
+            accountId,
+            whatsappNumberId:
+              typeof whatsapp_number_id === 'string' ? whatsapp_number_id : null,
+          })
+        ).id
+      } catch (error) {
+        if (error instanceof WhatsAppNumberError) {
+          return NextResponse.json({ error: error.message }, { status: 400 })
+        }
+        throw error
+      }
+
       const resolved = await findOrCreateConversation(
         supabase,
         accountId,
         user.id,
-        contact_id
+        contact_id,
+        selectedNumberId,
       )
       if (!resolved) {
         return NextResponse.json(
@@ -184,6 +204,8 @@ export async function POST(request: Request) {
         templateMessageParams: template_message_params,
         interactivePayload: interactive_payload,
         replyToMessageId: reply_to_message_id,
+        whatsappNumberId:
+          typeof whatsapp_number_id === 'string' ? whatsapp_number_id : null,
       })
 
       return NextResponse.json({
@@ -223,12 +245,14 @@ async function findOrCreateConversation(
   accountId: string,
   userId: string,
   contactId: string,
+  whatsappNumberId: string,
 ): Promise<string | null> {
   const { data: existing } = await supabase
     .from('conversations')
     .select('id')
     .eq('account_id', accountId)
     .eq('contact_id', contactId)
+    .eq('whatsapp_number_id', whatsappNumberId)
     .maybeSingle()
 
   if (existing) return existing.id
@@ -239,6 +263,7 @@ async function findOrCreateConversation(
       account_id: accountId,
       user_id: userId,
       contact_id: contactId,
+      whatsapp_number_id: whatsappNumberId,
     })
     .select('id')
     .single()

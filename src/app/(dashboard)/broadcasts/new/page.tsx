@@ -13,6 +13,8 @@ import { Step4ScheduleSend } from '@/components/broadcasts/step4-schedule-send';
 import { useBroadcastSending } from '@/hooks/use-broadcast-sending';
 import { Check } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { useWhatsAppNumbers } from '@/hooks/use-whatsapp-numbers';
+import { WhatsAppNumberFilter } from '@/components/whatsapp/number-filter';
 
 const steps = [
   { label: 'template', key: 'template' },
@@ -26,6 +28,8 @@ export default function NewBroadcastPage() {
   const t = useTranslations('Broadcasts.new');
   const { accountId } = useAuth();
   const { createAndSendBroadcast, isProcessing, progress } = useBroadcastSending();
+  const { numbers, selectedNumberId, setSelectedNumberId } = useWhatsAppNumbers();
+  const sendingNumberId = selectedNumberId ?? numbers.find((number) => number.is_default)?.id ?? numbers[0]?.id ?? '';
 
   const [currentStep, setCurrentStep] = useState(0);
   const [template, setTemplate] = useState<MessageTemplate | null>(null);
@@ -48,6 +52,10 @@ export default function NewBroadcastPage() {
 
   async function handleSend() {
     if (!template) return;
+    if (!sendingNumberId) {
+      toast.error('Connect a WhatsApp number before creating a broadcast');
+      return;
+    }
 
     try {
       const broadcastId = await createAndSendBroadcast({
@@ -62,6 +70,7 @@ export default function NewBroadcastPage() {
         },
         variables,
         headerMediaUrl,
+        whatsappNumberId: sendingNumberId,
       });
       router.push(`/broadcasts/${broadcastId}`);
     } catch (err) {
@@ -119,6 +128,7 @@ export default function NewBroadcastPage() {
       read_count: 0,
       replied_count: 0,
       failed_count: 0,
+      whatsapp_number_id: sendingNumberId || null,
     });
 
     if (error) {
@@ -132,11 +142,14 @@ export default function NewBroadcastPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-8">
       {/* Header */}
-      <div>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
         <h1 className="text-2xl font-bold text-foreground">{t('title')}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {t('subtitle')}
         </p>
+        </div>
+        <WhatsAppNumberFilter numbers={numbers} value={sendingNumberId || null} onChange={setSelectedNumberId} allowAll={false} />
       </div>
 
       {/* Step Indicator */}

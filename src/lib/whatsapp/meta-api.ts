@@ -23,6 +23,47 @@ export interface MetaPhoneInfo {
   quality_rating?: string
 }
 
+export interface ExchangeEmbeddedSignupCodeArgs {
+  code: string
+  appId: string
+  appSecret: string
+  redirectUri?: string
+}
+
+interface MetaAccessTokenResponse {
+  access_token: string
+  token_type?: string
+  expires_in?: number
+}
+
+/**
+ * Exchange the short-lived, single-use code returned by Embedded Signup.
+ * The app secret never reaches the browser and the authorization code is
+ * deliberately not persisted after this exchange.
+ */
+export async function exchangeEmbeddedSignupCode({
+  code,
+  appId,
+  appSecret,
+  redirectUri,
+}: ExchangeEmbeddedSignupCodeArgs): Promise<MetaAccessTokenResponse> {
+  const params = new URLSearchParams({
+    client_id: appId,
+    client_secret: appSecret,
+    code,
+  })
+  if (redirectUri) params.set('redirect_uri', redirectUri)
+
+  const response = await fetch(`${META_API_BASE}/oauth/access_token?${params}`, {
+    method: 'GET',
+    cache: 'no-store',
+  })
+  if (!response.ok) {
+    await throwMetaError(response, `Embedded Signup exchange failed: ${response.status}`)
+  }
+  return response.json()
+}
+
 interface MetaErrorResponse {
   error?: {
     message?: string

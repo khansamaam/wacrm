@@ -15,6 +15,7 @@ import {
   rateLimitResponse,
   RATE_LIMITS,
 } from '@/lib/rate-limit'
+import { resolveWhatsAppNumber, WhatsAppNumberError } from '@/lib/whatsapp/numbers'
 
 interface BroadcastResult {
   phone: string
@@ -103,6 +104,7 @@ export async function POST(request: Request) {
       template_name,
       template_language,
       template_params,
+      whatsapp_number_id,
     } = body
 
     // Normalize to a list of {phone, params} regardless of shape.
@@ -134,22 +136,23 @@ export async function POST(request: Request) {
       )
     }
 
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('*')
-      .eq('account_id', accountId)
-      .single()
-
-    if (configError || !config) {
+    let config
+    try {
+      config = await resolveWhatsAppNumber({
+        supabase,
+        accountId,
+        whatsappNumberId: typeof whatsapp_number_id === 'string' ? whatsapp_number_id : null,
+      })
+    } catch (error) {
+      if (!(error instanceof WhatsAppNumberError)) throw error
       return NextResponse.json(
-        {
-          error:
-            'WhatsApp not configured. Please set up your WhatsApp integration first.',
-        },
-        { status: 400 }
+        { error: error.message },
+        { status: error.code === 'not_accessible' ? 403 : 400 }
       )
     }
-
+    if (!config.access_token) {
+      return NextResponse.json({ error: 'WhatsApp access token is missing.' }, { status: 400 })
+    }
     const accessToken = decrypt(config.access_token)
 
     // Load the template row once so sendTemplateMessage can build
@@ -157,13 +160,16 @@ export async function POST(request: Request) {
     // the loop would N+1 against Supabase for every recipient.
     // Guard against a malformed local row crashing every send in
     // the loop with the same opaque TypeError — fail loudly once.
-    const { data: rawTemplateRow } = await supabase
+    let templateQuery = supabase
       .from('message_templates')
       .select('*')
       .eq('account_id', accountId)
       .eq('name', template_name)
       .eq('language', template_language || 'en_US')
-      .maybeSingle()
+    templateQuery = config.waba_id
+      ? templateQuery.eq('waba_id', config.waba_id)
+      : templateQuery.is('waba_id', null)
+    const { data: rawTemplateRow } = await templateQuery.maybeSingle()
     if (rawTemplateRow && !isMessageTemplate(rawTemplateRow)) {
       return NextResponse.json(
         {

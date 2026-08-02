@@ -57,6 +57,8 @@ import { CustomFieldsManager } from '@/components/contacts/custom-fields-manager
 import { useCan } from '@/hooks/use-can';
 import { GatedButton } from '@/components/ui/gated-button';
 import { useTranslations } from 'next-intl';
+import { useWhatsAppNumbers } from '@/hooks/use-whatsapp-numbers';
+import { WhatsAppNumberFilter } from '@/components/whatsapp/number-filter';
 
 const PAGE_SIZE = 25;
 
@@ -69,6 +71,7 @@ export default function ContactsPage() {
   const supabase = createClient();
   const canEdit = useCan('send-messages');
   const canEditSettings = useCan('edit-settings');
+  const { numbers, selectedNumberId, setSelectedNumberId } = useWhatsAppNumbers();
 
   const [contacts, setContacts] = useState<ContactWithTags[]>([]);
   const [loading, setLoading] = useState(true);
@@ -138,8 +141,9 @@ export default function ContactsPage() {
       // windowed total count + pagination) so a tag covering many
       // contacts can't silently truncate the result or overflow an IN
       // clause. See migration 025_filter_contacts_by_tags.
-      const { data, error } = await supabase.rpc('filter_contacts_by_tags', {
+      const { data, error } = await supabase.rpc('filter_contacts_by_tags_and_number', {
         p_tag_ids: selectedTagIds,
+        p_whatsapp_number_id: selectedNumberId,
         p_search: term || null,
         p_limit: PAGE_SIZE,
         p_offset: from,
@@ -156,13 +160,16 @@ export default function ContactsPage() {
     } else {
       let query = supabase
         .from('contacts')
-        .select('*', { count: 'exact' })
+        .select(selectedNumberId ? '*, conversations!inner(whatsapp_number_id)' : '*', { count: 'exact' })
         .order('created_at', { ascending: false })
         .range(from, to);
 
       if (term) {
         const like = `%${term}%`;
         query = query.or(`name.ilike.${like},phone.ilike.${like},email.ilike.${like}`);
+      }
+      if (selectedNumberId) {
+        query = query.eq('conversations.whatsapp_number_id', selectedNumberId);
       }
 
       const { data, count: exactCount, error } = await query;
@@ -172,7 +179,7 @@ export default function ContactsPage() {
         setLoading(false);
         return;
       }
-      contactRows = data ?? [];
+      contactRows = (data ?? []) as unknown as Contact[];
       count = exactCount ?? 0;
     }
 
@@ -207,7 +214,7 @@ export default function ContactsPage() {
 
     setContacts(enriched);
     setLoading(false);
-  }, [supabase, page, search, selectedTagIds, tagsMap, t]);
+  }, [supabase, page, search, selectedTagIds, selectedNumberId, tagsMap, t]);
 
   // Load-once-on-mount-ish data fetches. Each setter inside runs
   // inside an async promise completion (Supabase await), not
@@ -350,6 +357,10 @@ export default function ContactsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <WhatsAppNumberFilter numbers={numbers} value={selectedNumberId} onChange={(value) => {
+            setSelectedNumberId(value);
+            setPage(0);
+          }} />
           {canEditSettings && (
             <Button
               variant="outline"

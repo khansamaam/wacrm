@@ -52,10 +52,53 @@ const emptyRowsResult = () =>
 
 export async function loadMetrics(
   db: DB,
-  access: DashboardDataAccess = FULL_DASHBOARD_ACCESS
+  access: DashboardDataAccess = FULL_DASHBOARD_ACCESS,
+  whatsappNumberId?: string | null
 ): Promise<MetricsBundle> {
   const todayStart = startOfLocalDay().toISOString();
   const yesterdayStart = daysAgoStart(1).toISOString();
+
+  const conversationCount = () => {
+    let query = db
+      .from('conversations')
+      .select('id', { count: 'exact', head: true });
+    if (whatsappNumberId)
+      query = query.eq('whatsapp_number_id', whatsappNumberId);
+    return query;
+  };
+  const messageCount = () => {
+    let query = db
+      .from('messages')
+      .select('id', { count: 'exact', head: true });
+    if (whatsappNumberId)
+      query = query.eq('whatsapp_number_id', whatsappNumberId);
+    return query;
+  };
+  const contactCount = () => {
+    let query = db
+      .from('contacts')
+      .select(
+        whatsappNumberId ? 'id, conversations!inner(whatsapp_number_id)' : 'id',
+        { count: 'exact', head: true }
+      );
+    if (whatsappNumberId)
+      query = query.eq('conversations.whatsapp_number_id', whatsappNumberId);
+    return query;
+  };
+  const openDealsQuery = () => {
+    let query = db
+      .from('deals')
+      .select(
+        whatsappNumberId
+          ? 'value, status, conversations!inner(whatsapp_number_id)'
+          : 'value, status'
+      )
+      .eq('status', 'open');
+    if (whatsappNumberId) {
+      query = query.eq('conversations.whatsapp_number_id', whatsappNumberId);
+    }
+    return query;
+  };
 
   const [
     openConvCur,
@@ -68,60 +111,40 @@ export async function loadMetrics(
     messagesYesterday,
   ] = await Promise.all([
     access.inbox
-      ? db
-          .from('conversations')
-          .select('id', { count: 'exact', head: true })
-          .eq('status', 'open')
+      ? conversationCount().eq('status', 'open')
       : emptyCountResult(),
     access.inbox
-      ? db
-          .from('conversations')
-          .select('id', { count: 'exact', head: true })
-          .eq('status', 'open')
-          .gte('created_at', todayStart)
+      ? conversationCount().eq('status', 'open').gte('created_at', todayStart)
       : emptyCountResult(),
     access.inbox
-      ? db
-          .from('conversations')
-          .select('id', { count: 'exact', head: true })
+      ? conversationCount()
           .eq('status', 'open')
           .gte('created_at', yesterdayStart)
           .lt('created_at', todayStart)
       : emptyCountResult(),
     access.contacts
-      ? db
-          .from('contacts')
-          .select('id', { count: 'exact', head: true })
-          .gte('created_at', todayStart)
+      ? contactCount().gte('created_at', todayStart)
       : emptyCountResult(),
     access.contacts
-      ? db
-          .from('contacts')
-          .select('id', { count: 'exact', head: true })
+      ? contactCount()
           .gte('created_at', yesterdayStart)
           .lt('created_at', todayStart)
       : emptyCountResult(),
-    access.pipelines
-      ? db.from('deals').select('value, status').eq('status', 'open')
-      : emptyRowsResult(),
+    access.pipelines ? openDealsQuery() : emptyRowsResult(),
     access.inbox
-      ? db
-          .from('messages')
-          .select('id', { count: 'exact', head: true })
-          .eq('sender_type', 'agent')
-          .gte('created_at', todayStart)
+      ? messageCount().eq('sender_type', 'agent').gte('created_at', todayStart)
       : emptyCountResult(),
     access.inbox
-      ? db
-          .from('messages')
-          .select('id', { count: 'exact', head: true })
+      ? messageCount()
           .eq('sender_type', 'agent')
           .gte('created_at', yesterdayStart)
           .lt('created_at', todayStart)
       : emptyCountResult(),
   ]);
 
-  const openDealsRows = (openDeals.data ?? []) as { value: number | null }[];
+  const openDealsRows = (openDeals.data ?? []) as unknown as {
+    value: number | null;
+  }[];
   const openDealsValue = openDealsRows.reduce(
     (sum, d) => sum + (d.value ?? 0),
     0
@@ -152,14 +175,18 @@ export async function loadMetrics(
 
 export async function loadConversationsSeries(
   db: DB,
-  rangeDays: number
+  rangeDays: number,
+  whatsappNumberId?: string | null
 ): Promise<ConversationsSeriesPoint[]> {
   const start = daysAgoStart(rangeDays - 1).toISOString();
-  const { data, error } = await db
+  let query = db
     .from('messages')
     .select('created_at, sender_type')
     .gte('created_at', start)
     .order('created_at', { ascending: true });
+  if (whatsappNumberId)
+    query = query.eq('whatsapp_number_id', whatsappNumberId);
+  const { data, error } = await query;
   if (error) throw error;
 
   const keys = lastNDayKeys(rangeDays);
@@ -185,13 +212,31 @@ export async function loadConversationsSeries(
 
 // --- 3. Pipeline donut -------------------------------------------------
 
-export async function loadPipelineDonut(db: DB): Promise<PipelineDonutData> {
+export async function loadPipelineDonut(
+  db: DB,
+  whatsappNumberId?: string | null
+): Promise<PipelineDonutData> {
+  const dealsQuery = () => {
+    let query = db
+      .from('deals')
+      .select(
+        whatsappNumberId
+          ? 'stage_id, value, status, conversations!inner(whatsapp_number_id)'
+          : 'stage_id, value, status'
+      )
+      .eq('status', 'open');
+    if (whatsappNumberId) {
+      query = query.eq('conversations.whatsapp_number_id', whatsappNumberId);
+    }
+    return query;
+  };
+
   const [stagesRes, dealsRes] = await Promise.all([
     db
       .from('pipeline_stages')
       .select('id, name, color, pipeline_id, position')
       .order('position'),
-    db.from('deals').select('stage_id, value, status').eq('status', 'open'),
+    dealsQuery(),
   ]);
 
   const stages = (stagesRes.data ?? []) as {
@@ -199,7 +244,7 @@ export async function loadPipelineDonut(db: DB): Promise<PipelineDonutData> {
     name: string;
     color: string;
   }[];
-  const deals = (dealsRes.data ?? []) as {
+  const deals = (dealsRes.data ?? []) as unknown as {
     stage_id: string;
     value: number | null;
   }[];
@@ -233,19 +278,25 @@ export async function loadPipelineDonut(db: DB): Promise<PipelineDonutData> {
 
 // --- 4. Response time by day of week ----------------------------------
 
-export async function loadResponseTime(db: DB): Promise<ResponseTimeSummary> {
+export async function loadResponseTime(
+  db: DB,
+  whatsappNumberId?: string | null
+): Promise<ResponseTimeSummary> {
   // Pull the last 14 days of messages in one shot, then walk per
   // conversation to find each "first inbound" → "first subsequent
   // outbound" pair. 14 days gives us both "this week" + "last week"
   // with enough overlap if the user opens the dashboard late on a
   // Monday.
   const fourteenDaysAgo = daysAgoStart(13).toISOString();
-  const { data, error } = await db
+  let query = db
     .from('messages')
     .select('conversation_id, sender_type, created_at')
     .gte('created_at', fourteenDaysAgo)
     .order('conversation_id', { ascending: true })
     .order('created_at', { ascending: true });
+  if (whatsappNumberId)
+    query = query.eq('whatsapp_number_id', whatsappNumberId);
+  const { data, error } = await query;
   if (error) throw error;
 
   const rows = (data ?? []) as {
@@ -332,43 +383,77 @@ export async function loadResponseTime(db: DB): Promise<ResponseTimeSummary> {
 export async function loadActivity(
   db: DB,
   limit = 20,
-  access: DashboardDataAccess = FULL_DASHBOARD_ACCESS
+  access: DashboardDataAccess = FULL_DASHBOARD_ACCESS,
+  whatsappNumberId?: string | null
 ): Promise<ActivityItem[]> {
   // Pull ~10 from each source (plenty of headroom after merge-sort),
   // then interleave by timestamp. The individual per-table limits
   // keep the payload small; the final limit is enforced after sort.
+  // Keep these as factories so a disabled module never even constructs a
+  // query. Besides avoiding unnecessary work, this preserves the access
+  // boundary for clients that audit which tables a role attempted to read.
+  const messageActivity = () => {
+    let query = db
+      .from('messages')
+      .select(
+        'id, content_text, sender_type, created_at, conversation_id, conversations(contact_id, contacts(name, phone))'
+      )
+      .eq('sender_type', 'customer')
+      .order('created_at', { ascending: false })
+      .limit(10);
+    if (whatsappNumberId) {
+      query = query.eq('whatsapp_number_id', whatsappNumberId);
+    }
+    return query;
+  };
+
+  const broadcastActivity = () => {
+    let query = db
+      .from('broadcasts')
+      .select('id, name, status, total_recipients, created_at')
+      .order('created_at', { ascending: false })
+      .limit(5);
+    if (whatsappNumberId) {
+      query = query.eq('whatsapp_number_id', whatsappNumberId);
+    }
+    return query;
+  };
+  const contactActivity = () => {
+    let query = db
+      .from('contacts')
+      .select(
+        whatsappNumberId
+          ? 'id, name, phone, created_at, conversations!inner(whatsapp_number_id)'
+          : 'id, name, phone, created_at'
+      )
+      .order('created_at', { ascending: false })
+      .limit(10);
+    if (whatsappNumberId) {
+      query = query.eq('conversations.whatsapp_number_id', whatsappNumberId);
+    }
+    return query;
+  };
+  const dealActivity = () => {
+    let query = db
+      .from('deals')
+      .select(
+        whatsappNumberId
+          ? 'id, title, updated_at, stage:pipeline_stages(name), conversations!inner(whatsapp_number_id)'
+          : 'id, title, updated_at, stage:pipeline_stages(name)'
+      )
+      .order('updated_at', { ascending: false })
+      .limit(10);
+    if (whatsappNumberId) {
+      query = query.eq('conversations.whatsapp_number_id', whatsappNumberId);
+    }
+    return query;
+  };
+
   const [msgs, contacts, deals, broadcasts, autoLogs] = await Promise.all([
-    access.inbox
-      ? db
-          .from('messages')
-          .select(
-            'id, content_text, sender_type, created_at, conversation_id, conversations(contact_id, contacts(name, phone))'
-          )
-          .eq('sender_type', 'customer')
-          .order('created_at', { ascending: false })
-          .limit(10)
-      : emptyRowsResult(),
-    access.contacts
-      ? db
-          .from('contacts')
-          .select('id, name, phone, created_at')
-          .order('created_at', { ascending: false })
-          .limit(10)
-      : emptyRowsResult(),
-    access.pipelines
-      ? db
-          .from('deals')
-          .select('id, title, updated_at, stage:pipeline_stages(name)')
-          .order('updated_at', { ascending: false })
-          .limit(10)
-      : emptyRowsResult(),
-    access.broadcasts
-      ? db
-          .from('broadcasts')
-          .select('id, name, status, total_recipients, created_at')
-          .order('created_at', { ascending: false })
-          .limit(5)
-      : emptyRowsResult(),
+    access.inbox ? messageActivity() : emptyRowsResult(),
+    access.contacts ? contactActivity() : emptyRowsResult(),
+    access.pipelines ? dealActivity() : emptyRowsResult(),
+    access.broadcasts ? broadcastActivity() : emptyRowsResult(),
     access.automations
       ? db
           .from('automation_logs')
@@ -422,7 +507,7 @@ export async function loadActivity(
     });
   }
 
-  for (const c of (contacts.data ?? []) as Array<{
+  for (const c of (contacts.data ?? []) as unknown as Array<{
     id: string;
     name: string | null;
     phone: string;

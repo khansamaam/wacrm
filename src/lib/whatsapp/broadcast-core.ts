@@ -29,6 +29,7 @@ import {
 import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard';
 import type { MessageTemplate } from '@/types';
 import { findOrCreateContact } from '@/lib/api/v1/contacts';
+import { resolveWhatsAppNumber, WhatsAppNumberError } from '@/lib/whatsapp/numbers';
 
 /** Thrown by createBroadcast on a caller-visible failure; route maps it. */
 export class BroadcastError extends Error {
@@ -54,6 +55,7 @@ export interface CreateBroadcastParams {
   templateName: string;
   templateLanguage?: string | null;
   recipients: BroadcastRecipientInput[];
+  whatsappNumberId?: string | null;
 }
 
 interface PlannedRecipient {
@@ -111,29 +113,38 @@ export async function createBroadcast(
 
   // Config (fail fast + provides the audit trail owner already resolved
   // by the caller). Meta send needs phone_number_id + decrypted token.
-  const { data: config, error: configError } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', accountId)
-    .single();
-  if (configError || !config) {
+  let config;
+  try {
+    config = await resolveWhatsAppNumber({
+      supabase: db,
+      accountId,
+      whatsappNumberId: params.whatsappNumberId,
+    });
+  } catch (error) {
+    if (!(error instanceof WhatsAppNumberError)) throw error;
     throw new BroadcastError(
       'whatsapp_not_configured',
-      'WhatsApp not configured. Please set up your WhatsApp integration first.',
-      400
+      error.message,
+      error.code === 'not_accessible' ? 403 : 400
     );
+  }
+  if (!config.access_token) {
+    throw new BroadcastError('whatsapp_not_configured', 'WhatsApp access token is missing.', 400);
   }
   const accessToken = decrypt(config.access_token);
 
   // Template row (once) for header/button components; guard a
   // malformed local row rather than N identical opaque failures.
-  const { data: rawTemplateRow } = await db
+  let templateQuery = db
     .from('message_templates')
     .select('*')
     .eq('account_id', accountId)
     .eq('name', templateName)
-    .eq('language', templateLanguage)
-    .maybeSingle();
+    .eq('language', templateLanguage);
+  templateQuery = config.waba_id
+    ? templateQuery.eq('waba_id', config.waba_id)
+    : templateQuery.is('waba_id', null);
+  const { data: rawTemplateRow } = await templateQuery.maybeSingle();
   if (rawTemplateRow && !isMessageTemplate(rawTemplateRow)) {
     throw new BroadcastError(
       'template_malformed',
@@ -201,6 +212,7 @@ export async function createBroadcast(
       name: name || `API broadcast (${templateName})`,
       template_name: templateName,
       template_language: templateLanguage,
+      whatsapp_number_id: config.id,
       status: 'sending',
       total_recipients: deduped.length,
     })

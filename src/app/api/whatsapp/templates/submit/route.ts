@@ -10,6 +10,7 @@ import {
 import { buildMetaTemplatePayload } from '@/lib/whatsapp/template-components'
 import { ensureImageHeaderHandle } from '@/lib/whatsapp/template-header-handle'
 import { normalizeStatus } from '@/lib/whatsapp/template-status-normalize'
+import { resolveWhatsAppNumber, WhatsAppNumberError } from '@/lib/whatsapp/numbers'
 
 /**
  * Shared upsert payload builder — both the Meta-failure path and the
@@ -20,6 +21,7 @@ function buildUpsertRow(
   accountId: string,
   userId: string,
   payload: TemplatePayload,
+  wabaId: string | null,
   extras: {
     status: 'DRAFT' | string
     metaTemplateId: string | null
@@ -35,6 +37,7 @@ function buildUpsertRow(
     // still on (user_id, name, language) — see the upsert helper
     // for the cross-teammate dedup follow-up.
     user_id: userId,
+    waba_id: wabaId,
     name: payload.name,
     category: payload.category,
     language: payload.language,
@@ -60,16 +63,27 @@ async function upsertTemplateRow(
   supabase: SupabaseClient,
   row: ReturnType<typeof buildUpsertRow>,
 ) {
-  // TODO(account-sharing): conflict target is still scoped to
-  // user_id. Once a follow-up migration drops the legacy unique
-  // index on (user_id, name, language) and adds (account_id,
-  // name, language), switch `onConflict` here so two teammates
-  // can't shadow each other's same-named template.
-  return supabase
+  // A template name is scoped to a WABA. Resolve the row explicitly instead
+  // of using the legacy (user_id,name,language) conflict target, which would
+  // overwrite another connected number's template with the same name.
+  let existingQuery = supabase
     .from('message_templates')
-    .upsert(row, { onConflict: 'user_id,name,language' })
-    .select()
-    .single()
+    .select('id')
+    .eq('account_id', row.account_id)
+    .eq('name', row.name)
+    .eq('language', row.language)
+  existingQuery = row.waba_id
+    ? existingQuery.eq('waba_id', row.waba_id)
+    : existingQuery.is('waba_id', null)
+  const { data: existing, error: lookupError } = await existingQuery
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+  if (lookupError) return { data: null, error: lookupError }
+
+  return existing
+    ? supabase.from('message_templates').update(row).eq('id', existing.id).select().single()
+    : supabase.from('message_templates').insert(row).select().single()
 }
 
 /**
@@ -101,7 +115,7 @@ export async function POST(request: Request) {
     // message_templates row are account-scoped post-multi-user.
     const { data: profile } = await supabase
       .from('profiles')
-      .select('account_id')
+      .select('account_id, account_role')
       .eq('user_id', user.id)
       .maybeSingle()
     const accountId = profile?.account_id as string | undefined
@@ -111,10 +125,13 @@ export async function POST(request: Request) {
         { status: 403 },
       )
     }
+    if (profile?.account_role !== 'owner' && profile?.account_role !== 'admin') {
+      return NextResponse.json({ error: 'Admin access is required to create templates.' }, { status: 403 })
+    }
 
-    let payload: TemplatePayload
+    let payload: TemplatePayload & { whatsapp_number_id?: string }
     try {
-      payload = (await request.json()) as TemplatePayload
+      payload = (await request.json()) as TemplatePayload & { whatsapp_number_id?: string }
     } catch {
       return NextResponse.json({ error: 'Invalid JSON body.' }, { status: 400 })
     }
@@ -142,6 +159,22 @@ export async function POST(request: Request) {
       process.env.WHATSAPP_TEMPLATES_DRY_RUN === 'true' ||
       process.env.WHATSAPP_TEMPLATES_DRY_RUN === '1'
 
+    let config
+    try {
+      config = await resolveWhatsAppNumber({
+        supabase,
+        accountId,
+        whatsappNumberId: payload.whatsapp_number_id,
+        requireConnected: !dryRun,
+      })
+    } catch (error) {
+      if (!(error instanceof WhatsAppNumberError)) throw error
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.code === 'not_accessible' ? 403 : 400 },
+      )
+    }
+
     let metaTemplateId: string
     let metaStatus: string
 
@@ -149,20 +182,6 @@ export async function POST(request: Request) {
       metaTemplateId = `dry-run-${crypto.randomUUID()}`
       metaStatus = 'PENDING'
     } else {
-      const { data: config, error: configError } = await supabase
-        .from('whatsapp_config')
-        .select('*')
-        .eq('account_id', accountId)
-        .single()
-      if (configError || !config) {
-        return NextResponse.json(
-          {
-            error:
-              'WhatsApp not configured. Connect your WhatsApp Business account in Settings first.',
-          },
-          { status: 400 },
-        )
-      }
       if (!config.waba_id) {
         return NextResponse.json(
           {
@@ -173,6 +192,9 @@ export async function POST(request: Request) {
         )
       }
 
+      if (!config.access_token) {
+        return NextResponse.json({ error: 'WhatsApp access token is missing.' }, { status: 400 })
+      }
       const accessToken = decrypt(config.access_token)
 
       // Image headers need a Resumable-Upload handle (Meta rejects a
@@ -204,7 +226,7 @@ export async function POST(request: Request) {
         // until they fix and re-submit.
         await upsertTemplateRow(
           supabase,
-          buildUpsertRow(accountId, user.id, payload, {
+          buildUpsertRow(accountId, user.id, payload, config.waba_id, {
             status: 'DRAFT',
             metaTemplateId: null,
             submissionError: message,
@@ -227,7 +249,7 @@ export async function POST(request: Request) {
 
     const { data: row, error: upsertErr } = await upsertTemplateRow(
       supabase,
-      buildUpsertRow(accountId, user.id, payload, {
+      buildUpsertRow(accountId, user.id, payload, config.waba_id, {
         status: normalizeStatus(metaStatus),
         metaTemplateId,
         submissionError: null,

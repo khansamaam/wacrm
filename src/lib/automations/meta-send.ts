@@ -12,6 +12,7 @@ import {
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
 import { supabaseAdmin } from './admin-client'
+import { resolveWhatsAppNumber } from '@/lib/whatsapp/numbers'
 
 // ------------------------------------------------------------
 // Automation-side Meta sender.
@@ -131,15 +132,12 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     throw new Error(`contact phone invalid: ${contact.phone}`)
   }
 
-  const { data: config, error: configErr } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', input.accountId)
-    .single()
-  if (configErr || !config) {
-    throw new Error('WhatsApp not configured for this account')
-  }
-
+  const config = await resolveWhatsAppNumber({
+    supabase: db,
+    accountId: input.accountId,
+    conversationId: input.conversationId,
+  })
+  if (!config.access_token) throw new Error('WhatsApp access token is missing')
   const accessToken = decrypt(config.access_token)
 
   const attempt = async (phone: string): Promise<string> => {
@@ -203,6 +201,8 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     template_name,
     message_id: waMessageId,
     status: 'sent',
+    whatsapp_number_id: config.id,
+    message_origin: 'cloud_api',
   })
   if (msgErr) {
     // Meta already has the message; record the DB error but don't pretend

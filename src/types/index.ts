@@ -45,6 +45,7 @@ export interface Profile {
    * `@/lib/auth/roles` rather than comparing this string directly.
    */
   account_role?: AccountRole;
+  whatsapp_number_access_mode?: 'all' | 'selected';
   created_at: string;
 }
 
@@ -75,6 +76,8 @@ export interface AccountMember {
   avatar_url: string | null;
   role: AccountRole;
   joined_at: string;
+  whatsapp_number_access_mode?: 'all' | 'selected';
+  whatsapp_number_ids?: string[];
 }
 
 /**
@@ -94,6 +97,7 @@ export interface AccountInvitation {
   expires_at: string;
   accepted_at: string | null;
   accepted_by_user_id: string | null;
+  whatsapp_number_access_mode?: 'all' | 'selected';
 }
 
 export interface Contact {
@@ -161,6 +165,7 @@ export interface Conversation {
   id: string;
   user_id: string;
   contact_id: string;
+  whatsapp_number_id?: string | null;
   status: ConversationStatus;
   assigned_agent_id?: string;
   last_message_text?: string;
@@ -243,6 +248,8 @@ export interface TemplateMessageSnapshot {
 export interface Message {
   id: string;
   conversation_id: string;
+  whatsapp_number_id?: string | null;
+  message_origin?: 'cloud_api' | 'business_app' | 'history_sync' | 'external_api';
   sender_type: SenderType;
   sender_id?: string;
   content_type: ContentType;
@@ -316,6 +323,47 @@ export interface WhatsAppConfig {
   last_registration_error?: string;
 }
 
+export type WhatsAppConnectionMethod = 'cloud_api' | 'coexistence';
+export type WhatsAppNumberStatus =
+  | 'pending'
+  | 'connected'
+  | 'error'
+  | 'disconnected';
+
+/** Token-free number record returned by `/api/whatsapp/numbers`. */
+export interface WhatsAppNumber {
+  id: string;
+  account_id: string;
+  label: string;
+  phone_number_id: string;
+  display_phone_number?: string | null;
+  waba_id?: string | null;
+  connection_method: WhatsAppConnectionMethod;
+  status: WhatsAppNumberStatus;
+  is_default: boolean;
+  connected_at?: string | null;
+  registered_at?: string | null;
+  subscribed_apps_at?: string | null;
+  last_registration_error?: string | null;
+  is_on_biz_app?: boolean | null;
+  platform_type?: string | null;
+  coexistence_onboarded_at?: string | null;
+  history_sync_status:
+    | 'not_requested'
+    | 'pending'
+    | 'processing'
+    | 'completed'
+    | 'failed';
+  contacts_sync_status:
+    | 'not_requested'
+    | 'pending'
+    | 'processing'
+    | 'completed'
+    | 'failed';
+  created_at: string;
+  updated_at: string;
+}
+
 // Raw Meta status enum. We persist this verbatim from Meta (sync + webhook)
 // rather than collapsing to a local TitleCase set — distinctions like
 // PAUSED vs DISABLED vs IN_APPEAL drive the edit/resubmit/delete flows.
@@ -343,6 +391,7 @@ export interface TemplateSampleValues {
 
 export interface MessageTemplate {
   id: string;
+  waba_id?: string | null;
   user_id: string;
   name: string;
   category: 'Marketing' | 'Utility' | 'Authentication';
@@ -413,6 +462,7 @@ export type RecipientStatus = 'pending' | 'sent' | 'delivered' | 'read' | 'repli
 export interface Broadcast {
   id: string;
   user_id: string;
+  whatsapp_number_id?: string | null;
   name: string;
   template_name: string;
   template_language: string;

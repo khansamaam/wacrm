@@ -59,6 +59,10 @@ export async function POST(request: Request) {
     }
 
     const type = typeof body.type === 'string' ? body.type : 'text';
+    const whatsappNumberId =
+      typeof body.whatsapp_number_id === 'string'
+        ? body.whatsapp_number_id.trim()
+        : null;
 
     // Unpack the optional `template` object into the flat params the
     // send core expects. `params` as an array → legacy positional body
@@ -102,7 +106,8 @@ export async function POST(request: Request) {
       ctx.supabase,
       ctx.accountId,
       to,
-      typeof body.name === 'string' ? body.name : null
+      typeof body.name === 'string' ? body.name : null,
+      { whatsappNumberId },
     );
 
     const result = await sendMessageToConversation(
@@ -124,6 +129,7 @@ export async function POST(request: Request) {
           typeof body.reply_to_message_id === 'string'
             ? body.reply_to_message_id
             : null,
+        whatsappNumberId,
       }
     );
 
@@ -134,6 +140,7 @@ export async function POST(request: Request) {
         conversation_id: resolved.conversationId,
         contact_id: resolved.contactId,
         contact_created: resolved.contactCreated,
+        whatsapp_number_id: whatsappNumberId,
       },
       201
     );

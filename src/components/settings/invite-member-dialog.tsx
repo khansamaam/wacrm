@@ -38,6 +38,8 @@ import {
 } from '@/components/ui/select';
 import { useTranslations } from 'next-intl';
 import { useAuth } from '@/hooks/use-auth';
+import { useWhatsAppNumbers } from '@/hooks/use-whatsapp-numbers';
+import { Checkbox } from '@/components/ui/checkbox';
 
 type InviteRole = 'admin' | 'agent' | 'viewer';
 
@@ -77,11 +79,14 @@ export function InviteMemberDialog({
   const t = useTranslations('Settings.invite');
   const tRoles = useTranslations('Settings.roles');
   const { account } = useAuth();
+  const { numbers } = useWhatsAppNumbers();
   const [role, setRole] = useState<InviteRole>('agent');
   const [expiry, setExpiry] = useState<string>('7');
   const [label, setLabel] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<CreatedInvite | null>(null);
+  const [numberAccessMode, setNumberAccessMode] = useState<'all' | 'selected'>('all');
+  const [selectedNumberIds, setSelectedNumberIds] = useState<string[]>([]);
 
   function reset() {
     setRole('agent');
@@ -89,6 +94,8 @@ export function InviteMemberDialog({
     setLabel('');
     setResult(null);
     setSubmitting(false);
+    setNumberAccessMode('all');
+    setSelectedNumberIds([]);
   }
 
   async function handleCreate() {
@@ -103,6 +110,10 @@ export function InviteMemberDialog({
       toast.error(t('labelTooLong', { max: MAX_LABEL_LEN }));
       return;
     }
+    if (numberAccessMode === 'selected' && selectedNumberIds.length === 0) {
+      toast.error('Select at least one WhatsApp number');
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await fetch('/api/account/invitations', {
@@ -112,6 +123,8 @@ export function InviteMemberDialog({
           role,
           expiresInDays: Number(expiry),
           label: trimmedLabel || undefined,
+          whatsappNumberAccessMode: numberAccessMode,
+          whatsappNumberIds: numberAccessMode === 'selected' ? selectedNumberIds : [],
         }),
       });
 
@@ -286,6 +299,35 @@ export function InviteMemberDialog({
                   {tRoles(`${role}Hint` as 'adminHint' | 'agentHint' | 'viewerHint')}
                 </p>
               </div>
+
+              {numbers.length > 1 && (
+                <div className="space-y-2">
+                  <Label>WhatsApp number access</Label>
+                  <Select value={numberAccessMode} onValueChange={(value) => value && setNumberAccessMode(value as 'all' | 'selected')}>
+                    <SelectTrigger className="w-full bg-muted border-border"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All current and future numbers</SelectItem>
+                      <SelectItem value="selected">Selected numbers only</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {numberAccessMode === 'selected' && (
+                    <div className="space-y-2 rounded-lg border p-3">
+                      {numbers.map((number) => (
+                        <label key={number.id} className="flex cursor-pointer items-center gap-2 text-sm">
+                          <Checkbox
+                            checked={selectedNumberIds.includes(number.id)}
+                            onCheckedChange={(checked) => setSelectedNumberIds((current) =>
+                              checked ? [...new Set([...current, number.id])] : current.filter((id) => id !== number.id)
+                            )}
+                          />
+                          <span>{number.label}</span>
+                          <span className="text-muted-foreground">{number.display_phone_number || number.phone_number_id}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="space-y-2">
                 <Label className="text-muted-foreground">{t('validForLabel')}</Label>

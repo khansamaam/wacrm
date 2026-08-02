@@ -34,6 +34,7 @@ interface ConversationListProps {
    * or the tab was throttled. Optional so existing callers keep working.
    */
   resyncToken?: number;
+  whatsappNumberId?: string | null;
 }
 
 const STATUS_COLORS: Record<ConversationStatus, string> = {
@@ -52,6 +53,7 @@ export function ConversationList({
   conversations,
   onConversationsLoaded,
   resyncToken = 0,
+  whatsappNumberId = null,
 }: ConversationListProps) {
   const t = useTranslations("Inbox.conversationList");
   
@@ -95,10 +97,12 @@ export function ConversationList({
     let cancelled = false;
 
     (async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("conversations")
         .select(CONVERSATION_SELECT)
         .order("last_message_at", { ascending: false });
+      if (whatsappNumberId) query = query.eq('whatsapp_number_id', whatsappNumberId)
+      const { data, error } = await query
 
       if (cancelled) return;
 
@@ -124,7 +128,7 @@ export function ConversationList({
     // `resyncToken` is included so the parent can force a refetch when
     // the realtime channel reconnects or the tab regains focus — catches
     // up on any events sent while the WS was disconnected or throttled.
-  }, [resyncToken]);
+  }, [resyncToken, whatsappNumberId]);
 
   // Tag definitions for the filter picker — loaded once so labels/colours
   // stay stable regardless of which conversations happen to be loaded.

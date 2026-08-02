@@ -31,12 +31,16 @@ import { ResponseTimeChart } from '@/components/dashboard/response-time-chart';
 import { ActivityFeed } from '@/components/dashboard/activity-feed';
 
 import { useTranslations } from 'next-intl';
+import { useWhatsAppNumbers } from '@/hooks/use-whatsapp-numbers';
+import { WhatsAppNumberFilter } from '@/components/whatsapp/number-filter';
 
 type RangeDays = 7 | 30 | 90;
 
 export default function DashboardPage() {
   const t = useTranslations('Dashboard.page');
   const { defaultCurrency, canAccessModule } = useAuth();
+  const { numbers, selectedNumberId, setSelectedNumberId } =
+    useWhatsAppNumbers();
   const canInbox = canAccessModule('inbox');
   const canContacts = canAccessModule('contacts');
   const canPipelines = canAccessModule('pipelines');
@@ -100,26 +104,26 @@ export default function DashboardPage() {
     // setState + finally so a slow query doesn't hold up faster
     // sections — each widget shows its own skeleton independently.
     if (visibleMetricCount > 0) {
-      void loadMetrics(db, dashboardAccess)
+      void loadMetrics(db, dashboardAccess, selectedNumberId)
         .then((m) => setMetrics(m))
         .catch((err) => console.error('[dashboard] metrics failed:', err))
         .finally(() => setMetricsLoading(false));
     }
 
     if (canInbox) {
-      void loadConversationsSeries(db, 30)
+      void loadConversationsSeries(db, 30, selectedNumberId)
         .then((s) => setSeries((prev) => ({ ...prev, 30: s })))
         .catch((err) => console.error('[dashboard] series failed:', err))
         .finally(() => setSeriesLoading(false));
 
-      void loadResponseTime(db)
+      void loadResponseTime(db, selectedNumberId)
         .then((r) => setResponseTime(r))
         .catch((err) => console.error('[dashboard] response time failed:', err))
         .finally(() => setResponseTimeLoading(false));
     }
 
     if (canPipelines) {
-      void loadPipelineDonut(db)
+      void loadPipelineDonut(db, selectedNumberId)
         .then((p) => setPipeline(p))
         .catch((err) => console.error('[dashboard] pipeline failed:', err))
         .finally(() => setPipelineLoading(false));
@@ -129,7 +133,7 @@ export default function DashboardPage() {
     // (50 rows) is already in memory — switching sizes then becomes
     // a pure client-side slice with no extra round trip.
     if (hasActivity) {
-      void loadActivity(db, 50, dashboardAccess)
+      void loadActivity(db, 50, dashboardAccess, selectedNumberId)
         .then((a) => setActivity(a))
         .catch((err) => console.error('[dashboard] activity failed:', err))
         .finally(() => setActivityLoading(false));
@@ -140,6 +144,7 @@ export default function DashboardPage() {
     dashboardAccess,
     hasActivity,
     visibleMetricCount,
+    selectedNumberId,
   ]);
 
   useEffect(() => {
@@ -157,20 +162,37 @@ export default function DashboardPage() {
       if (series[r] !== null) return;
       setSeriesLoading(true);
       const db = createClient();
-      loadConversationsSeries(db, r)
+      loadConversationsSeries(db, r, selectedNumberId)
         .then((s) => setSeries((prev) => ({ ...prev, [r]: s })))
         .catch((err) => console.error('[dashboard] series failed:', err))
         .finally(() => setSeriesLoading(false));
     },
-    [series, canInbox]
+    [series, canInbox, selectedNumberId]
   );
 
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div>
-        <h1 className="text-foreground text-2xl font-bold">{t('title')}</h1>
-        <p className="text-muted-foreground mt-1 text-sm">{t('description')}</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-foreground text-2xl font-bold">{t('title')}</h1>
+          <p className="text-muted-foreground mt-1 text-sm">
+            {t('description')}
+          </p>
+        </div>
+        <WhatsAppNumberFilter
+          numbers={numbers}
+          value={selectedNumberId}
+          onChange={(value) => {
+            setSelectedNumberId(value);
+            setSeries({ 7: null, 30: null, 90: null });
+            setMetricsLoading(true);
+            setSeriesLoading(true);
+            setResponseTimeLoading(true);
+            setPipelineLoading(true);
+            setActivityLoading(true);
+          }}
+        />
       </div>
 
       {/* Metric cards */}
