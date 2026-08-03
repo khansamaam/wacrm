@@ -92,6 +92,9 @@ export default function NewBroadcastPage() {
         carouselCardMediaUrls,
         whatsappNumberId: sendingNumberId,
       });
+      toast.success(
+        'Broadcast queued. Delivery continues safely if you close this page.'
+      );
       router.push(`/broadcasts/${broadcastId}`);
     } catch (err) {
       // Previously swallowed with console.error — the wizard would
