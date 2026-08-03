@@ -20,6 +20,7 @@ import {
   isTemplateWebhookField,
 } from '@/lib/whatsapp/template-webhook'
 import { processPendingCoexistenceEvents } from '@/lib/whatsapp/coexistence-sync'
+import { parseInboundReply } from '@/lib/whatsapp/inbound-reply'
 
 // The `after()` callback in POST runs within this route's max duration.
 // Inbound processing can fan out to per-media Meta verification calls, so
@@ -53,6 +54,8 @@ interface WhatsAppMessage {
   sticker?: { id: string; mime_type: string }
   location?: { latitude: number; longitude: number; name?: string; address?: string }
   reaction?: { message_id: string; emoji: string }
+  /** Template quick-reply tap, including a button on a carousel card. */
+  button?: { payload?: string; text?: string }
   /**
    * Set when the customer taps a button or list row on an interactive
    * message we sent. `button_reply.id` / `list_reply.id` is whatever id
@@ -896,9 +899,11 @@ async function processMessage(
   ])
   const contentType = ALLOWED_CONTENT_TYPES.has(message.type)
     ? message.type
-    : message.type === 'sticker'
-      ? 'image'   // stickers are images
-      : 'text'    // reaction, unknown → text fallback
+    : message.type === 'button'
+      ? 'interactive' // template / carousel quick-reply tap
+      : message.type === 'sticker'
+        ? 'image'   // stickers are images
+        : 'text'    // reaction, unknown → text fallback
 
   // Determine whether this is the contact's very first inbound message
   // BEFORE we insert, so the count is accurate. Covers the case where
@@ -921,9 +926,8 @@ async function processMessage(
     status: 'delivered',
     created_at: new Date(parseInt(message.timestamp) * 1000).toISOString(),
     reply_to_message_id: replyToInternalId,
-    // Only populated for content_type='interactive'. Migration 010 added
-    // the column; null for every other content_type so existing inserts
-    // behave identically.
+    // Populated for interactive replies and template/carousel button taps.
+    // Migration 010 added the column; null for all ordinary messages.
     interactive_reply_id: interactiveReplyId,
     whatsapp_number_id: whatsappNumberId,
     message_origin: messageOrigin,
@@ -1192,23 +1196,13 @@ async function parseMessageContent(
     case 'reaction':
       return { ...empty, contentText: message.reaction?.emoji || null }
 
+    case 'button':
     case 'interactive': {
-      // The customer tapped a reply button or a list row on a message
-      // we previously sent. Meta delivers `interactive.button_reply` for
-      // 3-button messages and `interactive.list_reply` for list messages.
-      // Use the human-readable title as contentText so the inbox bubble
-      // renders the tap legibly ("Existing customer"), and stash the
-      // stable id separately so the Flows engine can route on it.
-      const reply =
-        message.interactive?.button_reply ?? message.interactive?.list_reply
-      if (reply?.id) {
-        return {
-          ...empty,
-          contentText: reply.title || reply.id,
-          interactiveReplyId: reply.id,
-        }
-      }
-      return { ...empty, contentText: '[Interactive reply]' }
+      // Template quick replies (including carousel cards) use top-level
+      // `button`; regular interactive messages use `interactive`. Store both
+      // as one internal reply shape so the inbox, Flows, and automations agree.
+      const reply = parseInboundReply(message)
+      return reply ? { ...empty, ...reply } : empty
     }
 
     default:
