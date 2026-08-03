@@ -1,6 +1,47 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
+type AuthFailure = {
+  code?: string
+}
+
+/**
+ * Supabase does not clear the browser session when the refresh token has
+ * already been revoked or consumed. Expire only this project's auth-cookie
+ * chunks so the next request starts from a clean, signed-out state.
+ */
+function clearInvalidAuthCookies(request: NextRequest, response: NextResponse) {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (!supabaseUrl) return
+
+  let storageKey: string
+  try {
+    storageKey = `sb-${new URL(supabaseUrl).hostname.split('.')[0]}-auth-token`
+  } catch {
+    return
+  }
+
+  request.cookies.getAll().forEach(({ name }) => {
+    if (name !== storageKey && !name.startsWith(`${storageKey}.`)) return
+
+    request.cookies.delete(name)
+    response.cookies.set(name, '', {
+      path: '/',
+      sameSite: 'lax',
+      maxAge: 0,
+    })
+  })
+}
+
+function isMissingRefreshToken(error: unknown): error is AuthFailure {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as AuthFailure).code === 'refresh_token_not_found'
+  )
+}
+
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
 
@@ -23,7 +64,23 @@ export async function middleware(request: NextRequest) {
     }
   )
 
-  const { data: { user } } = await supabase.auth.getUser()
+  let user = null
+  let authError: unknown = null
+
+  try {
+    const result = await supabase.auth.getUser()
+    user = result.data.user
+    authError = result.error
+  } catch (error) {
+    // Auth errors are normally returned by supabase-js, but handling a thrown
+    // error keeps the Edge request recoverable across client-library changes.
+    authError = error
+  }
+
+  if (isMissingRefreshToken(authError)) {
+    clearInvalidAuthCookies(request, supabaseResponse)
+    user = null
+  }
 
   // getUser() transparently refreshes an expired access token, which
   // ROTATES the refresh token and writes the new cookies onto

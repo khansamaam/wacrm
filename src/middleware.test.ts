@@ -14,6 +14,8 @@ let refreshedCookies: Array<{
   value: string;
   options: Record<string, unknown>;
 }> = [];
+let mockAuthError: { code: string } | null = null;
+let throwAuthError = false;
 
 vi.mock("@supabase/ssr", () => ({
   createServerClient: (
@@ -28,8 +30,9 @@ vi.mock("@supabase/ssr", () => ({
       // refreshed inside getUser(), which rotates the refresh token and
       // pushes the new cookies through setAll() before resolving.
       getUser: async () => {
+        if (throwAuthError && mockAuthError) throw mockAuthError;
         if (refreshedCookies.length) opts.cookies.setAll(refreshedCookies);
-        return { data: { user: mockUser } };
+        return { data: { user: mockUser }, error: mockAuthError };
       },
     },
   }),
@@ -43,6 +46,8 @@ beforeEach(() => {
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
   mockUser = null;
   refreshedCookies = [];
+  mockAuthError = null;
+  throwAuthError = false;
 });
 
 afterEach(() => vi.clearAllMocks());
@@ -109,5 +114,51 @@ describe("middleware — refreshed auth cookies survive redirects", () => {
     // No redirect — the normal NextResponse.next() already carries cookies.
     expect(res.headers.get("location")).toBeNull();
     expect(res.cookies.get(ROTATED.name)?.value).toBe(ROTATED.value);
+  });
+});
+
+describe("middleware — invalid refresh-token recovery", () => {
+  const STALE_COOKIE = "sb-test-auth-token";
+
+  it("expires a stale auth cookie and redirects protected pages to login", async () => {
+    mockAuthError = { code: "refresh_token_not_found" };
+
+    const request = new NextRequest("https://app.test/dashboard", {
+      headers: { cookie: `${STALE_COOKIE}=stale-session` },
+    });
+    const res = await middleware(request);
+
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toContain("/login");
+    expect(res.cookies.get(STALE_COOKIE)?.value).toBe("");
+    expect(res.cookies.get(STALE_COOKIE)?.maxAge).toBe(0);
+  });
+
+  it("expires every chunk when the auth session cookie is split", async () => {
+    mockAuthError = { code: "refresh_token_not_found" };
+
+    const request = new NextRequest("https://app.test/settings", {
+      headers: {
+        cookie: `${STALE_COOKIE}.0=stale-part-one; ${STALE_COOKIE}.1=stale-part-two`,
+      },
+    });
+    const res = await middleware(request);
+
+    expect(res.cookies.get(`${STALE_COOKIE}.0`)?.maxAge).toBe(0);
+    expect(res.cookies.get(`${STALE_COOKIE}.1`)?.maxAge).toBe(0);
+  });
+
+  it("also recovers if the auth client throws the refresh-token error", async () => {
+    mockAuthError = { code: "refresh_token_not_found" };
+    throwAuthError = true;
+
+    const request = new NextRequest("https://app.test/inbox", {
+      headers: { cookie: `${STALE_COOKIE}=stale-session` },
+    });
+    const res = await middleware(request);
+
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toContain("/login");
+    expect(res.cookies.get(STALE_COOKIE)?.maxAge).toBe(0);
   });
 });
