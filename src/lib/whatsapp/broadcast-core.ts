@@ -236,6 +236,9 @@ export async function createBroadcast(
       name: name || `API broadcast (${templateName})`,
       template_name: templateName,
       template_language: templateLanguage,
+      // Preserve the exact approved template shape used to prepare these
+      // jobs. A later template sync must not change a queued broadcast.
+      template_snapshot: templateRow,
       whatsapp_number_id: config.id,
       status: 'sending',
       total_recipients: deduped.length,
@@ -254,6 +257,10 @@ export async function createBroadcast(
         broadcast_id: broadcast.id,
         contact_id: r.contactId,
         status: 'pending' as const,
+        queue_payload: {
+          params: r.params,
+          messageParams: r.messageParams,
+        },
       }))
     )
     .select('id, contact_id');
@@ -360,7 +367,7 @@ export async function deliverBroadcast(
           error instanceof Error ? error.message : 'Inbox persistence failed';
         console.error(
           `[broadcast-core] Meta sent ${sentMessageId}, but Inbox persistence failed:`,
-          inboxSyncError,
+          inboxSyncError
         );
       }
       await db

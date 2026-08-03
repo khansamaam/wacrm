@@ -1,10 +1,15 @@
 'use client';
 
 import { useState } from 'react';
-import { createClient } from '@/lib/supabase/client';
+
 import { useAuth } from '@/hooks/use-auth';
-import { Contact, MessageTemplate } from '@/types';
+import { createClient } from '@/lib/supabase/client';
 import { buildBroadcastTemplateParams } from '@/lib/whatsapp/broadcast-template-params';
+import {
+  resolveBroadcastVariables,
+  type BroadcastVariableMapping,
+} from '@/lib/whatsapp/broadcast-variables';
+import type { Contact, MessageTemplate } from '@/types';
 
 export type CustomFieldOperator = 'is' | 'is_not' | 'contains';
 
@@ -23,29 +28,14 @@ export interface AudienceConfig {
   excludeTagIds?: string[];
 }
 
-/**
- * Variable mapping — each template placeholder (by key, usually "1",
- * "2", …) is resolved at send time. `field` maps to a built-in contact
- * field (name/phone/email/company); `custom_field` maps to a
- * contact_custom_values.value row keyed by the custom_fields.id stored
- * in `value`.
- */
-export type VariableMapping =
-  | { type: 'static'; value: string }
-  | { type: 'field'; value: string }
-  | { type: 'custom_field'; value: string };
+/** Kept as a public alias for the broadcast wizard's existing imports. */
+export type VariableMapping = BroadcastVariableMapping;
 
 interface BroadcastPayload {
   name: string;
   template: MessageTemplate;
   audience: AudienceConfig;
   variables: Record<string, VariableMapping>;
-  /**
-   * Media URL for an IMAGE/VIDEO/DOCUMENT header. Required at send
-   * time for media-header templates — Meta rejects the send without
-   * it. Passed through as `messageParams.headerMediaUrl`; the builder
-   * falls back to the template's stored URL only when this is empty.
-   */
   headerMediaUrl?: string;
   /** One send-time media URL per carousel card, in template order. */
   carouselCardMediaUrls?: string[];
@@ -58,95 +48,95 @@ interface UseBroadcastSendingReturn {
   progress: number;
 }
 
-/**
- * Meta rate-limit buffer. 10 per batch + 1 s pause matches the spec
- * and keeps us comfortably under Meta's per-phone-number messaging
- * rate so a large broadcast never trips the upstream limiter.
- */
-const SEND_BATCH_SIZE = 10;
-const SEND_BATCH_DELAY_MS = 1000;
-
-/** `broadcast_recipients` inserts are independent of the send rate. */
+const QUERY_PAGE_SIZE = 1_000;
+const IN_FILTER_CHUNK_SIZE = 500;
 const INSERT_BATCH_SIZE = 200;
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-interface BroadcastApiResult {
-  phone: string;
-  status: 'sent' | 'failed';
-  whatsapp_message_id?: string;
-  inbox_sync_error?: string;
-  error?: string;
-}
-
-/** contactId → (customFieldId → value). */
+type BrowserSupabaseClient = ReturnType<typeof createClient>;
 type CustomValueIndex = Map<string, Map<string, string>>;
 
-/**
- * Per-contact resolution of custom-field placeholders. Static and
- * built-in-field mappings resolve synchronously; custom fields read
- * from a pre-built index to avoid N+1 queries during the send loop.
- */
-export function resolveVariables(
-  variables: Record<string, VariableMapping>,
-  contact: Contact,
-  customValues?: Map<string, string>
-): string[] {
-  // Keys are typically "1","2",... — numeric-aware sort keeps
-  // {{1}} before {{10}}.
-  const keys = Object.keys(variables).sort((a, b) => {
-    const an = Number(a);
-    const bn = Number(b);
-    if (Number.isFinite(an) && Number.isFinite(bn)) return an - bn;
-    return a.localeCompare(b);
-  });
+/** Backwards-compatible export used by existing tests and UI helpers. */
+export const resolveVariables = resolveBroadcastVariables;
 
-  return keys.map((key) => {
-    const v = variables[key];
-    if (v.type === 'static') return v.value;
-
-    if (v.type === 'field') {
-      const fieldMap: Record<string, string | undefined> = {
-        name: contact.name,
-        phone: contact.phone,
-        email: contact.email,
-        company: contact.company,
-      };
-      return fieldMap[v.value] ?? '';
-    }
-
-    // custom_field
-    return customValues?.get(v.value) ?? '';
-  });
+async function fetchAllContacts(
+  supabase: BrowserSupabaseClient,
+  accountId: string
+): Promise<Contact[]> {
+  const contacts: Contact[] = [];
+  for (let from = 0; ; from += QUERY_PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from('contacts')
+      .select('*')
+      .eq('account_id', accountId)
+      .order('id')
+      .range(from, from + QUERY_PAGE_SIZE - 1);
+    if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
+    contacts.push(...((data ?? []) as Contact[]));
+    if ((data?.length ?? 0) < QUERY_PAGE_SIZE) break;
+  }
+  return contacts;
 }
 
-/**
- * Bulk-fetch contact_custom_values for a set of contacts. Returns an
- * index keyed by contact_id → field_id → value.
- */
+async function fetchContactIdsForTags(
+  supabase: BrowserSupabaseClient,
+  tagIds: string[]
+): Promise<string[]> {
+  const contactIds = new Set<string>();
+  for (
+    let tagOffset = 0;
+    tagOffset < tagIds.length;
+    tagOffset += IN_FILTER_CHUNK_SIZE
+  ) {
+    const tagChunk = tagIds.slice(tagOffset, tagOffset + IN_FILTER_CHUNK_SIZE);
+    for (let from = 0; ; from += QUERY_PAGE_SIZE) {
+      const { data, error } = await supabase
+        .from('contact_tags')
+        .select('contact_id')
+        .in('tag_id', tagChunk)
+        .range(from, from + QUERY_PAGE_SIZE - 1);
+      if (error)
+        throw new Error(`Failed to fetch contact tags: ${error.message}`);
+      for (const row of data ?? []) contactIds.add(row.contact_id);
+      if ((data?.length ?? 0) < QUERY_PAGE_SIZE) break;
+    }
+  }
+  return [...contactIds];
+}
+
+async function fetchContactsByIds(
+  supabase: BrowserSupabaseClient,
+  accountId: string,
+  contactIds: string[]
+): Promise<Contact[]> {
+  const contacts: Contact[] = [];
+  for (let i = 0; i < contactIds.length; i += IN_FILTER_CHUNK_SIZE) {
+    const { data, error } = await supabase
+      .from('contacts')
+      .select('*')
+      .eq('account_id', accountId)
+      .in('id', contactIds.slice(i, i + IN_FILTER_CHUNK_SIZE));
+    if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
+    contacts.push(...((data ?? []) as Contact[]));
+  }
+  return contacts;
+}
+
 async function fetchCustomValueIndex(
-  supabase: ReturnType<typeof createClient>,
+  supabase: BrowserSupabaseClient,
   contactIds: string[]
 ): Promise<CustomValueIndex> {
   const index: CustomValueIndex = new Map();
-  if (contactIds.length === 0) return index;
-
-  // Supabase PostgREST caps the .in(...) IN-clause roughly at 1000
-  // values. Page through to stay safe.
-  const PAGE = 500;
-  for (let i = 0; i < contactIds.length; i += PAGE) {
-    const slice = contactIds.slice(i, i + PAGE);
-    const { data } = await supabase
+  for (let i = 0; i < contactIds.length; i += IN_FILTER_CHUNK_SIZE) {
+    const { data, error } = await supabase
       .from('contact_custom_values')
       .select('contact_id, custom_field_id, value')
-      .in('contact_id', slice);
-
+      .in('contact_id', contactIds.slice(i, i + IN_FILTER_CHUNK_SIZE));
+    if (error)
+      throw new Error(`Failed to load custom values: ${error.message}`);
     for (const row of data ?? []) {
-      const bucket = index.get(row.contact_id) ?? new Map<string, string>();
-      bucket.set(row.custom_field_id, row.value ?? '');
-      index.set(row.contact_id, bucket);
+      const values = index.get(row.contact_id) ?? new Map<string, string>();
+      values.set(row.custom_field_id, row.value ?? '');
+      index.set(row.contact_id, values);
     }
   }
   return index;
@@ -157,177 +147,120 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
 
-  async function resolveAudience(audience: AudienceConfig): Promise<Contact[]> {
-    const supabase = createClient();
-
-    let contacts: Contact[] = [];
-
-    if (audience.type === 'all') {
-      const { data, error } = await supabase.from('contacts').select('*');
-      if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
-      contacts = data ?? [];
-    } else if (
-      audience.type === 'tags' &&
-      audience.tagIds &&
-      audience.tagIds.length > 0
-    ) {
-      const { data: contactTags, error: tagError } = await supabase
-        .from('contact_tags')
+  async function resolveCustomFieldAudience(
+    supabase: BrowserSupabaseClient,
+    activeAccountId: string,
+    filter: CustomFieldFilter
+  ): Promise<Contact[]> {
+    const contactIds = new Set<string>();
+    for (let from = 0; ; from += QUERY_PAGE_SIZE) {
+      let query = supabase
+        .from('contact_custom_values')
         .select('contact_id')
-        .in('tag_id', audience.tagIds);
+        .eq('custom_field_id', filter.fieldId)
+        .range(from, from + QUERY_PAGE_SIZE - 1);
+      if (filter.operator === 'is') query = query.eq('value', filter.value);
+      else if (filter.operator === 'is_not')
+        query = query.neq('value', filter.value);
+      else query = query.ilike('value', `%${filter.value}%`);
 
-      if (tagError)
-        throw new Error(`Failed to fetch contact tags: ${tagError.message}`);
-
-      if (contactTags && contactTags.length > 0) {
-        const uniqueContactIds = [
-          ...new Set(contactTags.map((ct) => ct.contact_id)),
-        ];
-        const { data, error } = await supabase
-          .from('contacts')
-          .select('*')
-          .in('id', uniqueContactIds);
-        if (error)
-          throw new Error(`Failed to fetch contacts: ${error.message}`);
-        contacts = data ?? [];
-      }
-    } else if (audience.type === 'custom_field' && audience.customField) {
-      contacts = await resolveCustomFieldAudience(
-        supabase,
-        audience.customField
-      );
-    } else if (audience.type === 'csv' && audience.csvContacts) {
-      contacts = await upsertCsvContacts(supabase, audience.csvContacts);
+      const { data, error } = await query;
+      if (error)
+        throw new Error(`Custom-field filter failed: ${error.message}`);
+      for (const row of data ?? []) contactIds.add(row.contact_id);
+      if ((data?.length ?? 0) < QUERY_PAGE_SIZE) break;
     }
-
-    // Apply exclude tags (works across all contact-derived audience
-    // types). CSV contacts are synthetic so exclusion doesn't apply.
-    if (audience.excludeTagIds && audience.excludeTagIds.length > 0) {
-      const { data: excludeRows } = await supabase
-        .from('contact_tags')
-        .select('contact_id')
-        .in('tag_id', audience.excludeTagIds);
-      const excludedIds = new Set((excludeRows ?? []).map((r) => r.contact_id));
-      contacts = contacts.filter((c) => !excludedIds.has(c.id));
-    }
-
-    return contacts;
+    return fetchContactsByIds(supabase, activeAccountId, [...contactIds]);
   }
 
-  /**
-   * CSV uploads arrive as raw phone/name pairs, not DB rows. Before we
-   * can insert broadcast_recipients (whose contact_id FKs contacts.id),
-   * we need real contacts.id UUIDs. So: look up each CSV phone in the
-   * caller's contacts table; insert any that don't exist; return the
-   * resolved set.
-   *
-   * Pre-existing implementation synthesized `csv-N` strings as
-   * contact_id, which failed the UUID cast on insert — every CSV
-   * broadcast silently created zero recipients.
-   */
   async function upsertCsvContacts(
-    supabase: ReturnType<typeof createClient>,
+    supabase: BrowserSupabaseClient,
+    activeAccountId: string,
+    userId: string,
     csvRows: { phone: string; name?: string }[]
   ): Promise<Contact[]> {
-    if (csvRows.length === 0) return [];
-
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    const user = session?.user;
-    if (!user) {
-      throw new Error('You are not signed in.');
-    }
-    if (!accountId) {
-      throw new Error('Your profile is not linked to an account.');
-    }
-
-    // De-duplicate by phone within the CSV (users can paste duplicates).
     const uniqueByPhone = new Map<string, { phone: string; name?: string }>();
-    for (const row of csvRows) {
-      if (row.phone) uniqueByPhone.set(row.phone, row);
-    }
+    for (const row of csvRows) if (row.phone) uniqueByPhone.set(row.phone, row);
     const phones = [...uniqueByPhone.keys()];
-
-    // Single round-trip lookup of existing contacts by phone.
-    const { data: existing, error: lookupErr } = await supabase
-      .from('contacts')
-      .select('*')
-      .eq('user_id', user.id)
-      .in('phone', phones);
-    if (lookupErr) {
-      throw new Error(`Failed to look up CSV contacts: ${lookupErr.message}`);
-    }
-
     const byPhone = new Map<string, Contact>();
-    for (const c of (existing ?? []) as Contact[]) {
-      if (c.phone) byPhone.set(c.phone, c);
+
+    for (let i = 0; i < phones.length; i += IN_FILTER_CHUNK_SIZE) {
+      const { data, error } = await supabase
+        .from('contacts')
+        .select('*')
+        .eq('account_id', activeAccountId)
+        .in('phone', phones.slice(i, i + IN_FILTER_CHUNK_SIZE));
+      if (error)
+        throw new Error(`Failed to look up CSV contacts: ${error.message}`);
+      for (const contact of (data ?? []) as Contact[]) {
+        if (contact.phone) byPhone.set(contact.phone, contact);
+      }
     }
 
-    // Insert only missing contacts, in one batch per 200 rows (PostgREST
-    // has a default payload cap — 200 keeps individual requests small).
     const missing = phones
-      .filter((p) => !byPhone.has(p))
+      .filter((phone) => !byPhone.has(phone))
       .map((phone) => ({
-        user_id: user.id,
-        account_id: accountId,
+        user_id: userId,
+        account_id: activeAccountId,
         phone,
         name: uniqueByPhone.get(phone)?.name ?? null,
       }));
-
-    const INSERT_CHUNK = 200;
-    for (let i = 0; i < missing.length; i += INSERT_CHUNK) {
-      const chunk = missing.slice(i, i + INSERT_CHUNK);
-      const { data: inserted, error: insertErr } = await supabase
+    for (let i = 0; i < missing.length; i += INSERT_BATCH_SIZE) {
+      const { data, error } = await supabase
         .from('contacts')
-        .insert(chunk)
+        .insert(missing.slice(i, i + INSERT_BATCH_SIZE))
         .select();
-      if (insertErr) {
-        throw new Error(`Failed to create CSV contacts: ${insertErr.message}`);
-      }
-      for (const c of (inserted ?? []) as Contact[]) {
-        if (c.phone) byPhone.set(c.phone, c);
+      if (error)
+        throw new Error(`Failed to create CSV contacts: ${error.message}`);
+      for (const contact of (data ?? []) as Contact[]) {
+        if (contact.phone) byPhone.set(contact.phone, contact);
       }
     }
 
-    // Preserve input order so analytics roughly matches the CSV order.
     return phones
-      .map((p) => byPhone.get(p))
-      .filter((c): c is Contact => Boolean(c));
+      .map((phone) => byPhone.get(phone))
+      .filter((value): value is Contact => Boolean(value));
   }
 
-  async function resolveCustomFieldAudience(
-    supabase: ReturnType<typeof createClient>,
-    filter: CustomFieldFilter
+  async function resolveAudience(
+    supabase: BrowserSupabaseClient,
+    activeAccountId: string,
+    userId: string,
+    audience: AudienceConfig
   ): Promise<Contact[]> {
-    const { fieldId, operator, value } = filter;
+    let contacts: Contact[] = [];
+    if (audience.type === 'all') {
+      contacts = await fetchAllContacts(supabase, activeAccountId);
+    } else if (audience.type === 'tags' && audience.tagIds?.length) {
+      const ids = await fetchContactIdsForTags(supabase, audience.tagIds);
+      contacts = await fetchContactsByIds(supabase, activeAccountId, ids);
+    } else if (audience.type === 'custom_field' && audience.customField) {
+      contacts = await resolveCustomFieldAudience(
+        supabase,
+        activeAccountId,
+        audience.customField
+      );
+    } else if (audience.type === 'csv' && audience.csvContacts) {
+      contacts = await upsertCsvContacts(
+        supabase,
+        activeAccountId,
+        userId,
+        audience.csvContacts
+      );
+    }
 
-    // Build the WHERE clause for the operator. PostgREST supports
-    // eq/neq/ilike via the query builder — use ilike with wildcards
-    // for "contains" so the match is case-insensitive.
-    let query = supabase
-      .from('contact_custom_values')
-      .select('contact_id')
-      .eq('custom_field_id', fieldId);
+    if (audience.excludeTagIds?.length) {
+      const excluded = new Set(
+        await fetchContactIdsForTags(supabase, audience.excludeTagIds)
+      );
+      contacts = contacts.filter((contact) => !excluded.has(contact.id));
+    }
 
-    if (operator === 'is') query = query.eq('value', value);
-    else if (operator === 'is_not') query = query.neq('value', value);
-    else if (operator === 'contains')
-      query = query.ilike('value', `%${value}%`);
-
-    const { data: matches, error: matchErr } = await query;
-    if (matchErr)
-      throw new Error(`Custom-field filter failed: ${matchErr.message}`);
-
-    const contactIds = [...new Set((matches ?? []).map((m) => m.contact_id))];
-    if (contactIds.length === 0) return [];
-
-    const { data, error } = await supabase
-      .from('contacts')
-      .select('*')
-      .in('id', contactIds);
-    if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
-    return data ?? [];
+    // Protect the unique broadcast/contact invariant even if a source query
+    // or imported CSV contains duplicates.
+    return [
+      ...new Map(contacts.map((contact) => [contact.id, contact])).values(),
+    ];
   }
 
   async function createAndSendBroadcast(
@@ -335,36 +268,41 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
   ): Promise<string> {
     setIsProcessing(true);
     setProgress(0);
-
     const supabase = createClient();
 
     try {
-      // ── Step 0: Resolve current user ──────────────────────────────
-      // broadcasts.user_id is NOT NULL + guarded by RLS
-      // (auth.uid() = user_id). Without this, the INSERT below was
-      // silently failing with 23502 / 42501 — the wizard would
-      // no-op with no feedback.
       const {
         data: { session },
       } = await supabase.auth.getSession();
       const user = session?.user;
-      if (!user) {
-        throw new Error('You are not signed in.');
-      }
-      if (!accountId) {
+      if (!user) throw new Error('You are not signed in.');
+      if (!accountId)
         throw new Error('Your profile is not linked to an account.');
-      }
 
-      // ── Step 1: Resolve audience contacts ─────────────────────────
       setProgress(5);
-      const contacts = await resolveAudience(payload.audience);
-
-      if (contacts.length === 0) {
+      const contacts = await resolveAudience(
+        supabase,
+        accountId,
+        user.id,
+        payload.audience
+      );
+      if (contacts.length === 0)
         throw new Error('No contacts found for this audience.');
-      }
 
-      // ── Step 2: Create broadcast row ──────────────────────────────
-      setProgress(10);
+      // Freeze personalization now. The worker must send exactly what the
+      // creator reviewed, even if a contact or template changes while queued.
+      setProgress(15);
+      const customValues = await fetchCustomValueIndex(
+        supabase,
+        contacts.map((contact) => contact.id)
+      );
+      const headerType = payload.template.header_type;
+      const isMediaHeader =
+        headerType === 'image' ||
+        headerType === 'video' ||
+        headerType === 'document';
+      const headerMediaUrl = payload.headerMediaUrl?.trim();
+
       const { data: broadcast, error: broadcastError } = await supabase
         .from('broadcasts')
         .insert({
@@ -374,6 +312,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
           template_name: payload.template.name,
           template_language: payload.template.language ?? 'en_US',
           template_variables: payload.variables,
+          template_snapshot: payload.template,
           audience_filter: {
             type: payload.audience.type,
             tagIds: payload.audience.tagIds,
@@ -389,201 +328,61 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
           failed_count: 0,
           whatsapp_number_id: payload.whatsappNumberId,
         })
-        .select()
+        .select('id')
         .single();
-
       if (broadcastError || !broadcast) {
         throw new Error(
           `Failed to create broadcast: ${broadcastError?.message ?? 'unknown error'}`
         );
       }
 
-      // ── Step 3: Insert recipient rows ─────────────────────────────
-      setProgress(20);
-      const recipientRows = contacts.map((contact) => ({
-        broadcast_id: broadcast.id,
-        contact_id: contact.id,
-        status: 'pending' as const,
-      }));
+      const recipientRows = contacts.map((contact) => {
+        const params = resolveBroadcastVariables(
+          payload.variables,
+          contact,
+          customValues.get(contact.id)
+        );
+        return {
+          broadcast_id: broadcast.id,
+          contact_id: contact.id,
+          status: 'pending' as const,
+          queue_payload: {
+            params,
+            messageParams: buildBroadcastTemplateParams(payload.template, {
+              body: params,
+              headerMediaUrl:
+                isMediaHeader && headerMediaUrl ? headerMediaUrl : undefined,
+              carouselCardMediaUrls: payload.carouselCardMediaUrls,
+            }),
+          },
+        };
+      });
 
       for (let i = 0; i < recipientRows.length; i += INSERT_BATCH_SIZE) {
         const batch = recipientRows.slice(i, i + INSERT_BATCH_SIZE);
-        const { error: recipientError } = await supabase
+        const { error } = await supabase
           .from('broadcast_recipients')
           .insert(batch);
-        if (recipientError) {
-          // Previous impl logged and marched on — the broadcast then ran
-          // with an incomplete recipient set, so webhook status updates
-          // couldn't find some rows and the aggregate counts drifted.
-          // Flip the broadcast to failed so the user sees the problem
-          // immediately, then throw to abort the send loop.
+        if (error) {
           await supabase
             .from('broadcasts')
-            .update({
-              status: 'failed',
-              failed_count: contacts.length,
-            })
+            .update({ status: 'failed' })
             .eq('id', broadcast.id);
           throw new Error(
-            `Failed to insert recipient batch ${i / INSERT_BATCH_SIZE + 1}: ${recipientError.message}`
+            `Failed to enqueue recipient batch ${i / INSERT_BATCH_SIZE + 1}: ${error.message}`
           );
         }
+        setProgress(
+          20 + Math.round(((i + batch.length) / recipientRows.length) * 75)
+        );
       }
 
-      // ── Step 4: Fetch recipients (joined contact) + preload custom values
-      setProgress(30);
-      const { data: recipients, error: recipientsFetchError } = await supabase
-        .from('broadcast_recipients')
-        .select('*, contact:contacts(*)')
-        .eq('broadcast_id', broadcast.id);
-
-      if (recipientsFetchError || !recipients) {
-        throw new Error('Failed to fetch broadcast recipients');
-      }
-
-      // One bulk fetch of custom values for every contact in this
-      // broadcast, avoiding N+1 during the send loop.
-      const contactIds = recipients
-        .map((r) => r.contact?.id)
-        .filter((id): id is string => Boolean(id));
-      const customValueIndex = await fetchCustomValueIndex(
-        supabase,
-        contactIds
+      // This is only a low-latency kick. The database rows are the source of
+      // truth and the scheduled worker will resume them if this request or the
+      // user's browser disappears.
+      fetch('/api/whatsapp/broadcast/worker', { method: 'POST' }).catch(
+        () => undefined
       );
-
-      let failedCount = 0;
-      const totalRecipients = recipients.length;
-
-      // Media-header templates (image/video/document) require a media
-      // URL on every send. Collected in the personalize step and applied
-      // to all recipients; falls back to the template's stored URL on the
-      // server when omitted.
-      const headerType = payload.template.header_type;
-      const isMediaHeader =
-        headerType === 'image' ||
-        headerType === 'video' ||
-        headerType === 'document';
-      const headerMediaUrl = payload.headerMediaUrl?.trim();
-      for (let i = 0; i < recipients.length; i += SEND_BATCH_SIZE) {
-        const batch = recipients.slice(i, i + SEND_BATCH_SIZE);
-
-        const apiRecipients = batch
-          .filter((r) => r.contact?.phone)
-          .map((r) => {
-            const resolvedParams = r.contact
-              ? resolveVariables(
-                  payload.variables,
-                  r.contact,
-                  customValueIndex.get(r.contact.id)
-                )
-              : [];
-            return {
-              phone: r.contact!.phone as string,
-              contact_id: r.contact!.id,
-              params: resolvedParams,
-              messageParams: buildBroadcastTemplateParams(payload.template, {
-                body: resolvedParams,
-                headerMediaUrl:
-                  isMediaHeader && headerMediaUrl ? headerMediaUrl : undefined,
-                carouselCardMediaUrls: payload.carouselCardMediaUrls,
-              }),
-            };
-          });
-
-        if (apiRecipients.length === 0) continue;
-
-        try {
-          const res = await fetch('/api/whatsapp/broadcast', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              recipients: apiRecipients,
-              template_name: payload.template.name,
-              template_language: payload.template.language ?? 'en_US',
-              whatsapp_number_id: payload.whatsappNumberId,
-            }),
-          });
-
-          const data = await res.json();
-
-          if (!res.ok) {
-            throw new Error(data.error || 'Broadcast API request failed');
-          }
-
-          const resultsByPhone = new Map<string, BroadcastApiResult>();
-          for (const r of (data.results ?? []) as BroadcastApiResult[]) {
-            resultsByPhone.set(r.phone, r);
-          }
-
-          for (const recipient of batch) {
-            const phone = recipient.contact?.phone;
-            const result = phone ? resultsByPhone.get(phone) : undefined;
-
-            if (!result) {
-              failedCount++;
-              await supabase
-                .from('broadcast_recipients')
-                .update({
-                  status: 'failed',
-                  error_message: 'No phone number on contact',
-                })
-                .eq('id', recipient.id);
-              continue;
-            }
-
-            if (result.status === 'sent') {
-              await supabase
-                .from('broadcast_recipients')
-                .update({
-                  status: 'sent',
-                  sent_at: new Date().toISOString(),
-                  whatsapp_message_id: result.whatsapp_message_id ?? null,
-                  error_message: result.inbox_sync_error ?? null,
-                })
-                .eq('id', recipient.id);
-            } else {
-              failedCount++;
-              await supabase
-                .from('broadcast_recipients')
-                .update({
-                  status: 'failed',
-                  error_message: result.error ?? 'Unknown error',
-                })
-                .eq('id', recipient.id);
-            }
-          }
-        } catch (err) {
-          for (const recipient of batch) {
-            failedCount++;
-            await supabase
-              .from('broadcast_recipients')
-              .update({
-                status: 'failed',
-                error_message:
-                  err instanceof Error ? err.message : 'Unknown error',
-              })
-              .eq('id', recipient.id);
-          }
-        }
-
-        const progressPct =
-          30 + Math.round(((i + batch.length) / totalRecipients) * 60);
-        setProgress(progressPct);
-
-        if (i + SEND_BATCH_SIZE < recipients.length) {
-          await sleep(SEND_BATCH_DELAY_MS);
-        }
-      }
-
-      // ── Step 5: Finalize status ───────────────────────────────────
-      // Aggregate counts are maintained by the DB trigger (migration
-      // 003); we only flip the final status here.
-      setProgress(95);
-      const finalStatus = failedCount === totalRecipients ? 'failed' : 'sent';
-      await supabase
-        .from('broadcasts')
-        .update({ status: finalStatus })
-        .eq('id', broadcast.id);
 
       setProgress(100);
       return broadcast.id;
