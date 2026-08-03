@@ -44,13 +44,13 @@ function StatusIcon({
 }) {
   switch (status) {
     case "sending":
-      return <Clock className="h-3 w-3 text-muted-foreground" />;
+      return <Clock className="h-3 w-3 text-white/70" />;
     case "sent":
-      return <Check className="h-3 w-3 text-muted-foreground" />;
+      return <Check className="h-3 w-3 text-white/80" />;
     case "delivered":
-      return <CheckCheck className="h-3 w-3 text-muted-foreground" />;
+      return <CheckCheck className="h-3 w-3 text-white/90" />;
     case "read":
-      return <CheckCheck className="h-3 w-3 text-blue-400" />;
+      return <CheckCheck className="h-3 w-3 text-sky-200" />;
     case "failed": {
       const detail = [
         errorCode ? `[${errorCode}]` : null,
@@ -65,7 +65,7 @@ function StatusIcon({
           aria-label={detail}
           tabIndex={0}
         >
-          <XCircle className="h-3 w-3 text-red-400" />
+          <XCircle className="h-3 w-3 text-red-200" />
         </span>
       );
     }
@@ -218,12 +218,12 @@ function TemplateMessageContent({
       ) : null}
       <WhatsAppTemplateText text={payload.body_text} />
       {payload.footer_text ? (
-        <p className="mt-1.5 text-xs text-primary-foreground/70">
+        <p className="mt-1.5 text-xs text-white/70">
           {payload.footer_text}
         </p>
       ) : null}
       {payload.buttons?.length ? (
-        <div className="mt-2 space-y-1 border-t border-primary-foreground/20 pt-2">
+        <div className="mt-2 space-y-1 border-t border-white/20 pt-2">
           {payload.buttons.map((button, index) => {
             const content = (
               <>
@@ -240,7 +240,7 @@ function TemplateMessageContent({
               </>
             );
             const className =
-              "flex w-full items-center justify-center gap-2 rounded-md bg-primary-foreground/15 px-3 py-2 text-center text-sm font-medium text-primary-foreground";
+              "flex w-full items-center justify-center gap-2 rounded-md bg-white/15 px-3 py-2 text-center text-sm font-medium text-white transition-colors hover:bg-white/20";
 
             if (button.type === "URL" && button.url) {
               return (
@@ -430,7 +430,7 @@ export function MessageBubble({
         className={cn(
           "relative rounded-2xl px-3 py-2",
           isAgent
-            ? "rounded-br-md bg-primary text-primary-foreground"
+            ? "rounded-br-md bg-[#16835c] text-white shadow-sm"
             : "rounded-bl-md bg-muted text-foreground",
         )}
       >
@@ -454,7 +454,7 @@ export function MessageBubble({
               glance. */}
           {message.ai_generated && (
             <span
-              className="inline-flex items-center gap-0.5 rounded-full bg-primary-foreground/20 px-1.5 py-px text-[9px] font-semibold uppercase leading-none tracking-wide text-primary-foreground"
+              className="inline-flex items-center gap-0.5 rounded-full bg-white/20 px-1.5 py-px text-[9px] font-semibold uppercase leading-none tracking-wide text-white"
               title={t("aiBadgeTitle")}
             >
               <Sparkles className="h-2.5 w-2.5" />
@@ -468,7 +468,7 @@ export function MessageBubble({
               // timestamp must read against that (not the neutral
               // foreground) — otherwise it goes low-contrast in light
               // mode. Inbound bubbles use the muted surface.
-              isAgent ? "text-primary-foreground/70" : "text-muted-foreground",
+              isAgent ? "text-white/70" : "text-muted-foreground",
             )}
           >
             {time}
