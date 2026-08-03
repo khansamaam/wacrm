@@ -8,8 +8,9 @@ audience.
 ## Deployment
 
 1. Apply `supabase/migrations/052_durable_broadcast_queue.sql`.
-2. Set a long random `BROADCAST_WORKER_SECRET` on the application server. If it
-   is omitted, the route uses `AUTOMATION_CRON_SECRET`.
+2. Optionally set a long random `BROADCAST_WORKER_SECRET` on the application
+   server. If it is omitted, the route uses `AUTOMATION_CRON_SECRET`. When both
+   are omitted, the worker accepts an unauthenticated cron request.
 3. Configure a scheduler to call the worker once per minute:
 
 ```sh
@@ -18,9 +19,20 @@ curl --fail --silent --show-error \
   https://YOUR_APP_HOST/api/whatsapp/broadcast/worker
 ```
 
+Without either secret, omit the header:
+
+```sh
+curl --fail --silent --show-error \
+  https://YOUR_APP_HOST/api/whatsapp/broadcast/worker
+```
+
 For cPanel, add that command under **Cron Jobs** with the once-per-minute
 schedule (`* * * * *`). Store the secret in the hosting environment and do not
 commit it to Git.
+
+The unauthenticated mode cannot create campaigns or recipient jobs, but a
+public caller could repeatedly invoke the existing queue and consume server
+resources. A secret remains recommended for internet-facing deployments.
 
 The dashboard also sends an authenticated best-effort worker kick immediately
 after enqueueing. That reduces startup latency, but cron is the recovery path
