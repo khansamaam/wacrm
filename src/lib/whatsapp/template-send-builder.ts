@@ -260,13 +260,18 @@ export function buildSendComponents(
             body_text: card.body_text,
             buttons: card.buttons,
           };
-          return {
-            card_index: cardIndex,
-            components: buildSendComponents(cardTemplate, values) as Exclude<
-              MetaSendComponent,
-              { type: 'carousel' }
-            >[],
-          };
+          try {
+            return {
+              card_index: cardIndex,
+              components: buildSendComponents(cardTemplate, values) as Exclude<
+                MetaSendComponent,
+                { type: 'carousel' }
+              >[],
+            };
+          } catch (error) {
+            const message = error instanceof Error ? error.message : 'Invalid send parameters.';
+            throw new Error(`Carousel card ${cardIndex + 1}: ${message}`);
+          }
         }),
       },
     ];

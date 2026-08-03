@@ -4,6 +4,7 @@ import { decrypt } from '@/lib/whatsapp/encryption'
 import { resolveWhatsAppNumber, WhatsAppNumberError } from '@/lib/whatsapp/numbers'
 import { normalizeStatus } from '@/lib/whatsapp/template-status-normalize'
 import type { TemplateButton, TemplateCarouselCard, TemplateSampleValues } from '@/types'
+import { preserveCarouselMediaUrls } from '@/lib/whatsapp/carousel-media'
 
 /**
  * Sync message templates from Meta → local message_templates table.
@@ -288,7 +289,7 @@ export async function POST(request: Request) {
 
       const { data: existing, error: lookupErr } = await supabase
         .from('message_templates')
-        .select('id')
+        .select('id, carousel_cards')
         .eq('account_id', accountId)
         .eq('name', t.name)
         .eq('language', t.language)
@@ -305,9 +306,19 @@ export async function POST(request: Request) {
       }
 
       if (existing?.id) {
+        // Sync must not discard the public URLs required at send time. Meta
+        // returns creation-time header handles, which cannot be reused as
+        // media ids when delivering a message.
+        const updateRow = {
+          ...row,
+          carousel_cards: preserveCarouselMediaUrls(
+            carouselCards,
+            existing.carousel_cards as TemplateCarouselCard[] | null,
+          ),
+        }
         const { error: updErr } = await supabase
           .from('message_templates')
-          .update(row)
+          .update(updateRow)
           .eq('id', existing.id)
         if (updErr) {
           errors.push({

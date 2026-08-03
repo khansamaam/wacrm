@@ -20,9 +20,15 @@ import {
   ChevronRight,
   LayoutTemplate,
   Loader2,
+  Upload,
 } from "lucide-react";
 import { extractVariableIndices } from "@/lib/whatsapp/template-validators";
+import {
+  MEDIA_MAX_BYTES_BY_KIND,
+  uploadAccountMedia,
+} from "@/lib/storage/upload-media";
 import { useTranslations } from "next-intl";
+import { toast } from "sonner";
 
 export interface TemplateSendValues {
   body: string[];
@@ -132,6 +138,7 @@ export function TemplatePicker({
   const [carouselParams, setCarouselParams] = useState<
     NonNullable<TemplateSendValues["carouselCards"]>
   >([]);
+  const [uploadingMedia, setUploadingMedia] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -186,6 +193,44 @@ export function TemplatePicker({
     setHeaderMediaUrl("");
     setButtonParams({});
     setCarouselParams([]);
+    setUploadingMedia(null);
+  }
+
+  async function uploadImage(file: File, cardIndex?: number) {
+    if (!["image/jpeg", "image/png"].includes(file.type)) {
+      toast.error(t("imageUploadInvalid"));
+      return;
+    }
+    if (file.size > MEDIA_MAX_BYTES_BY_KIND.image) {
+      toast.error(t("imageUploadTooLarge"));
+      return;
+    }
+
+    const uploadKey = cardIndex === undefined ? "header" : `card-${cardIndex}`;
+    setUploadingMedia(uploadKey);
+    try {
+      const { publicUrl } = await uploadAccountMedia("chat-media", file);
+      if (cardIndex === undefined) {
+        setHeaderMediaUrl(publicUrl);
+      } else {
+        setCarouselParams((current) =>
+          current.map((values, index) =>
+            index === cardIndex
+              ? { ...values, headerMediaUrl: publicUrl }
+              : values,
+          ),
+        );
+      }
+      toast.success(t("imageUploadSuccess"));
+    } catch (error) {
+      toast.error(
+        t("imageUploadFailed", {
+          message: error instanceof Error ? error.message : "Unknown error",
+        }),
+      );
+    } finally {
+      setUploadingMedia(null);
+    }
   }
 
   function handleOpenChange(next: boolean) {
@@ -251,6 +296,7 @@ export function TemplatePicker({
   const canConfirm =
     !!selected &&
     !!slots &&
+    uploadingMedia === null &&
     slots.bodyVars.every((_, i) => (params[i] ?? "").trim().length > 0) &&
     (slots.headerVarCount === 0 || headerText.trim().length > 0) &&
     (slots.mediaHeaderType === null || isValidHttpUrl(headerMediaUrl.trim())) &&
@@ -364,6 +410,29 @@ export function TemplatePicker({
                       placeholder={t("mediaHeaderUrlPlaceholder")}
                       className="border-border bg-muted text-foreground"
                     />
+                    {card.header_type === "image" && (
+                      <label className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border border-border px-3 text-xs text-popover-foreground hover:bg-muted">
+                        {uploadingMedia === `card-${cardIndex}` ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Upload className="size-3.5" />
+                        )}
+                        {uploadingMedia === `card-${cardIndex}`
+                          ? t("uploadingImage")
+                          : t("uploadImage")}
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png"
+                          className="sr-only"
+                          disabled={uploadingMedia !== null}
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            if (file) void uploadImage(file, cardIndex);
+                            event.target.value = "";
+                          }}
+                        />
+                      </label>
+                    )}
                     {isValidHttpUrl(values.headerMediaUrl?.trim() ?? "") && card.header_type === "image" && (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={values.headerMediaUrl} alt="" className="max-h-32 rounded-md border border-border object-contain" />
@@ -432,6 +501,29 @@ export function TemplatePicker({
                   placeholder={t("mediaHeaderUrlPlaceholder")}
                   className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
                 />
+                {slots.mediaHeaderType === "image" && (
+                  <label className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border border-border px-3 text-xs text-popover-foreground hover:bg-muted">
+                    {uploadingMedia === "header" ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Upload className="size-3.5" />
+                    )}
+                    {uploadingMedia === "header"
+                      ? t("uploadingImage")
+                      : t("uploadImage")}
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png"
+                      className="sr-only"
+                      disabled={uploadingMedia !== null}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) void uploadImage(file);
+                        event.target.value = "";
+                      }}
+                    />
+                  </label>
+                )}
                 <p className="text-[10px] text-muted-foreground">
                   {t("mediaHeaderUrlHint")}
                 </p>

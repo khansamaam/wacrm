@@ -350,4 +350,21 @@ describe('buildSendComponents — end-to-end mix', () => {
       ],
     });
   });
+
+  it('identifies the card when send-time media is missing', () => {
+    expect(() =>
+      buildSendComponents(
+        row({
+          template_type: 'carousel',
+          body_text: 'Choose an offer.',
+          carousel_cards: [
+            {
+              header_type: 'image',
+              body_text: 'Missing media',
+            },
+          ],
+        }),
+      ),
+    ).toThrow(/Carousel card 1: image header requires a media link or id/);
+  });
 });
