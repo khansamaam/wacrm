@@ -8,7 +8,8 @@
 //     "template_name": "promo_july",        // required, approved template
 //     "template_language": "en_US",         // optional (default en_US)
 //     "recipients": [                        // required, 1..1000
-//       { "to": "+14155550123", "params": ["Jane"] },
+//       { "to": "+14155550123", "params": ["Jane"],
+//         "message_params": { "carouselCards": [...] } },
 //       { "to": "+14155550124" }
 //     ]
 //   }
@@ -61,22 +62,31 @@ export async function POST(request: Request) {
 
     const auditUserId = await resolveAuditUserId(ctx.supabase, ctx.accountId);
 
-    const plan = await createBroadcast(ctx.supabase, ctx.accountId, auditUserId, {
-      name: typeof body.name === 'string' ? body.name : null,
-      templateName,
-      templateLanguage:
-        typeof body.template_language === 'string'
-          ? body.template_language
-          : null,
-      whatsappNumberId:
-        typeof body.whatsapp_number_id === 'string'
-          ? body.whatsapp_number_id.trim()
-          : null,
-      recipients: recipients.map((r) => ({
-        to: typeof r?.to === 'string' ? r.to : '',
-        params: Array.isArray(r?.params) ? r.params : undefined,
-      })),
-    });
+    const plan = await createBroadcast(
+      ctx.supabase,
+      ctx.accountId,
+      auditUserId,
+      {
+        name: typeof body.name === 'string' ? body.name : null,
+        templateName,
+        templateLanguage:
+          typeof body.template_language === 'string'
+            ? body.template_language
+            : null,
+        whatsappNumberId:
+          typeof body.whatsapp_number_id === 'string'
+            ? body.whatsapp_number_id.trim()
+            : null,
+        recipients: recipients.map((r) => ({
+          to: typeof r?.to === 'string' ? r.to : '',
+          params: Array.isArray(r?.params) ? r.params : undefined,
+          messageParams:
+            r?.message_params && typeof r.message_params === 'object'
+              ? r.message_params
+              : undefined,
+        })),
+      }
+    );
 
     // Fan out after the response is sent. Uses the same service-role
     // client — no request-scoped auth needed for the Meta calls or

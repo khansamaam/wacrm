@@ -29,7 +29,11 @@ import {
 import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard';
 import type { MessageTemplate } from '@/types';
 import { findOrCreateContact } from '@/lib/api/v1/contacts';
-import { resolveWhatsAppNumber, WhatsAppNumberError } from '@/lib/whatsapp/numbers';
+import {
+  resolveWhatsAppNumber,
+  WhatsAppNumberError,
+} from '@/lib/whatsapp/numbers';
+import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder';
 
 /** Thrown by createBroadcast on a caller-visible failure; route maps it. */
 export class BroadcastError extends Error {
@@ -48,6 +52,8 @@ export interface BroadcastRecipientInput {
   to: string;
   /** Positional body params for the template ({{1}}, {{2}}…). */
   params?: string[];
+  /** Structured header/card/button parameters for media and carousel sends. */
+  messageParams?: SendTimeParams;
 }
 
 export interface CreateBroadcastParams {
@@ -62,6 +68,7 @@ interface PlannedRecipient {
   recipientRowId: string;
   phone: string;
   params: string[];
+  messageParams?: SendTimeParams;
 }
 
 export interface BroadcastPlan {
@@ -129,7 +136,11 @@ export async function createBroadcast(
     );
   }
   if (!config.access_token) {
-    throw new BroadcastError('whatsapp_not_configured', 'WhatsApp access token is missing.', 400);
+    throw new BroadcastError(
+      'whatsapp_not_configured',
+      'WhatsApp access token is missing.',
+      400
+    );
   }
   const accessToken = decrypt(config.access_token);
 
@@ -156,10 +167,17 @@ export async function createBroadcast(
 
   // Resolve each recipient to a contact. Invalid phones are dropped
   // (counted as rejected) rather than aborting the whole broadcast.
-  const resolved: { contactId: string; phone: string; params: string[] }[] = [];
+  const resolved: {
+    contactId: string;
+    phone: string;
+    params: string[];
+    messageParams?: SendTimeParams;
+  }[] = [];
   let rejected = 0;
   for (const r of recipients) {
-    const sanitized = sanitizePhoneForMeta(typeof r.to === 'string' ? r.to : '');
+    const sanitized = sanitizePhoneForMeta(
+      typeof r.to === 'string' ? r.to : ''
+    );
     if (!isValidE164(sanitized)) {
       rejected++;
       continue;
@@ -173,6 +191,7 @@ export async function createBroadcast(
       params: Array.isArray(r.params)
         ? r.params.filter((p): p is string => typeof p === 'string')
         : [],
+      messageParams: r.messageParams,
     });
   }
 
@@ -243,7 +262,12 @@ export async function createBroadcast(
   const byContact = new Map(deduped.map((r) => [r.contactId, r]));
   const planned: PlannedRecipient[] = recipientRows.map((row) => {
     const r = byContact.get(row.contact_id as string)!;
-    return { recipientRowId: row.id as string, phone: r.phone, params: r.params };
+    return {
+      recipientRowId: row.id as string,
+      phone: r.phone,
+      params: r.params,
+      messageParams: r.messageParams,
+    };
   });
 
   return {
@@ -292,12 +316,14 @@ export async function deliverBroadcast(
           language: plan.templateLanguage,
           template: plan.templateRow ?? undefined,
           params: recipient.params,
+          messageParams: recipient.messageParams,
         });
         sentMessageId = result.messageId;
         lastError = null;
         break;
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error';
+        const message =
+          error instanceof Error ? error.message : 'Unknown error';
         lastError = message;
         // Only a "recipient not allowed" error is worth another variant.
         if (!isRecipientNotAllowedError(message)) break;

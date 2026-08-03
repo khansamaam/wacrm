@@ -27,9 +27,15 @@ export default function NewBroadcastPage() {
   const router = useRouter();
   const t = useTranslations('Broadcasts.new');
   const { accountId } = useAuth();
-  const { createAndSendBroadcast, isProcessing, progress } = useBroadcastSending();
-  const { numbers, selectedNumberId, setSelectedNumberId } = useWhatsAppNumbers();
-  const sendingNumberId = selectedNumberId ?? numbers.find((number) => number.is_default)?.id ?? numbers[0]?.id ?? '';
+  const { createAndSendBroadcast, isProcessing, progress } =
+    useBroadcastSending();
+  const { numbers, selectedNumberId, setSelectedNumberId } =
+    useWhatsAppNumbers();
+  const sendingNumberId =
+    selectedNumberId ??
+    numbers.find((number) => number.is_default)?.id ??
+    numbers[0]?.id ??
+    '';
 
   const [currentStep, setCurrentStep] = useState(0);
   const [template, setTemplate] = useState<MessageTemplate | null>(null);
@@ -48,7 +54,20 @@ export default function NewBroadcastPage() {
     Record<string, { type: 'static' | 'field' | 'custom_field'; value: string }>
   >({});
   const [headerMediaUrl, setHeaderMediaUrl] = useState('');
+  const [carouselCardMediaUrls, setCarouselCardMediaUrls] = useState<string[]>(
+    []
+  );
   const [name, setName] = useState('');
+
+  function handleTemplateSelect(nextTemplate: MessageTemplate) {
+    setTemplate(nextTemplate);
+    setHeaderMediaUrl(nextTemplate.header_media_url ?? '');
+    setCarouselCardMediaUrls(
+      (nextTemplate.carousel_cards ?? []).map(
+        (card) => card.header_media_url ?? ''
+      )
+    );
+  }
 
   async function handleSend() {
     if (!template) return;
@@ -70,6 +89,7 @@ export default function NewBroadcastPage() {
         },
         variables,
         headerMediaUrl,
+        carouselCardMediaUrls,
         whatsappNumberId: sendingNumberId,
       });
       router.push(`/broadcasts/${broadcastId}`);
@@ -144,12 +164,15 @@ export default function NewBroadcastPage() {
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-        <h1 className="text-2xl font-bold text-foreground">{t('title')}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {t('subtitle')}
-        </p>
+          <h1 className="text-foreground text-2xl font-bold">{t('title')}</h1>
+          <p className="text-muted-foreground mt-1 text-sm">{t('subtitle')}</p>
         </div>
-        <WhatsAppNumberFilter numbers={numbers} value={sendingNumberId || null} onChange={setSelectedNumberId} allowAll={false} />
+        <WhatsAppNumberFilter
+          numbers={numbers}
+          value={sendingNumberId || null}
+          onChange={setSelectedNumberId}
+          allowAll={false}
+        />
       </div>
 
       {/* Step Indicator */}
@@ -166,15 +189,19 @@ export default function NewBroadcastPage() {
                     isCompleted
                       ? 'bg-primary text-primary-foreground'
                       : isActive
-                        ? 'border-2 border-primary bg-primary/10 text-primary'
-                        : 'border border-border bg-muted text-muted-foreground'
+                        ? 'border-primary bg-primary/10 text-primary border-2'
+                        : 'border-border bg-muted text-muted-foreground border'
                   }`}
                 >
                   {isCompleted ? <Check className="h-4 w-4" /> : index + 1}
                 </div>
                 <span
                   className={`hidden text-sm font-medium sm:block ${
-                    isActive ? 'text-foreground' : isCompleted ? 'text-primary' : 'text-muted-foreground'
+                    isActive
+                      ? 'text-foreground'
+                      : isCompleted
+                        ? 'text-primary'
+                        : 'text-muted-foreground'
                   }`}
                 >
                   {t(`steps.${step.label}`)}
@@ -204,7 +231,7 @@ export default function NewBroadcastPage() {
           {currentStep === 0 && (
             <Step1ChooseTemplate
               selectedTemplate={template}
-              onSelect={setTemplate}
+              onSelect={handleTemplateSelect}
               onNext={() => setCurrentStep(1)}
               onBack={() => router.push('/broadcasts')}
             />
@@ -224,6 +251,8 @@ export default function NewBroadcastPage() {
               onUpdate={setVariables}
               headerMediaUrl={headerMediaUrl}
               onHeaderMediaUrlChange={setHeaderMediaUrl}
+              carouselCardMediaUrls={carouselCardMediaUrls}
+              onCarouselCardMediaUrlsChange={setCarouselCardMediaUrls}
               onNext={() => setCurrentStep(3)}
               onBack={() => setCurrentStep(1)}
             />
