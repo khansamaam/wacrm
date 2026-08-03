@@ -51,6 +51,8 @@ interface EmbeddedSignupResult {
   businessId?: string;
 }
 
+type PartialEmbeddedSignupResult = Partial<Omit<EmbeddedSignupResult, 'code'>>;
+
 interface FacebookLoginResponse {
   authResponse?: { code?: string };
   status?: string;
@@ -94,7 +96,7 @@ export function WhatsAppNumbers() {
   const [editMetaAppSecret, setEditMetaAppSecret] = useState('');
   const [editMetaCoexistenceConfigId, setEditMetaCoexistenceConfigId] =
     useState('');
-  const signupResultRef = useRef<Omit<EmbeddedSignupResult, 'code'> | null>(
+  const signupResultRef = useRef<PartialEmbeddedSignupResult | null>(
     null
   );
   const appOrigin =
@@ -177,20 +179,25 @@ export function WhatsAppNumbers() {
         !isRecord(payload.data)
       )
         return;
-      if (payload.event !== 'FINISH' && payload.event !== 'FINISH_ONLY_WABA')
+      if (
+        payload.event !== 'FINISH' &&
+        payload.event !== 'FINISH_ONLY_WABA' &&
+        payload.event !== 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING'
+      )
         return;
       const phoneNumberId = readString(
         payload.data.phone_number_id,
         payload.data.phoneNumberId
       );
       const wabaId = readString(payload.data.waba_id, payload.data.wabaId);
-      if (!phoneNumberId || !wabaId) return;
+      if (!phoneNumberId && !wabaId) return;
       signupResultRef.current = {
-        phoneNumberId,
-        wabaId,
+        ...(signupResultRef.current ?? {}),
+        ...(phoneNumberId ? { phoneNumberId } : {}),
+        ...(wabaId ? { wabaId } : {}),
         businessId:
           readString(payload.data.business_id, payload.data.businessId) ||
-          undefined,
+          signupResultRef.current?.businessId,
       };
     };
     window.addEventListener('message', receiveSignupEvent);
@@ -921,16 +928,26 @@ async function loadFacebookSdk(appId: string): Promise<void> {
 }
 
 async function waitForSignupResult(
-  ref: MutableRefObject<Omit<EmbeddedSignupResult, 'code'> | null>,
+  ref: MutableRefObject<PartialEmbeddedSignupResult | null>,
   timeoutMs: number
 ): Promise<Omit<EmbeddedSignupResult, 'code'>> {
   const started = Date.now();
-  while (!ref.current && Date.now() - started < timeoutMs) {
+  while (
+    (!ref.current?.phoneNumberId || !ref.current?.wabaId) &&
+    Date.now() - started < timeoutMs
+  ) {
     await new Promise((resolve) => window.setTimeout(resolve, 100));
   }
-  if (!ref.current)
-    throw new Error('Meta did not return the selected phone number details');
-  return ref.current;
+  if (!ref.current?.phoneNumberId || !ref.current?.wabaId) {
+    throw new Error(
+      'Meta did not return the selected phone number details. Make sure session logging is enabled for this Embedded Signup configuration.'
+    );
+  }
+  return {
+    phoneNumberId: ref.current.phoneNumberId,
+    wabaId: ref.current.wabaId,
+    businessId: ref.current.businessId,
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

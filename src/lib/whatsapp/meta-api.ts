@@ -283,6 +283,47 @@ export async function getSubscribedApps(
   return data.data ?? []
 }
 
+export interface RequestSmbAppDataSyncArgs {
+  phoneNumberId: string
+  accessToken: string
+  syncType: 'history' | 'smb_app_state_sync'
+}
+
+export interface RequestSmbAppDataSyncResult {
+  messaging_product: string
+  request_id: string
+}
+
+/**
+ * Request the WhatsApp Business App data sync flow for an onboarded
+ * coexistence number. Meta later delivers the actual payload via
+ * webhook events (`history` / `smb_app_state_sync`).
+ */
+export async function requestSmbAppDataSync(
+  args: RequestSmbAppDataSyncArgs,
+): Promise<RequestSmbAppDataSyncResult> {
+  const { phoneNumberId, accessToken, syncType } = args
+  const url = `${META_API_BASE}/${phoneNumberId}/smb_app_data`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      sync_type: syncType,
+    }),
+  })
+  if (!response.ok) {
+    await throwMetaError(
+      response,
+      `Meta SMB App Data API error: ${response.status}`,
+    )
+  }
+  return response.json()
+}
+
 // ============================================================
 // Sending
 // ============================================================

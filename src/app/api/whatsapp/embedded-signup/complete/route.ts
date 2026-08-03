@@ -7,6 +7,7 @@ import {
   subscribeWabaToApp,
   verifyPhoneNumber,
 } from '@/lib/whatsapp/meta-api';
+import { processPendingCoexistenceSyncJobs } from '@/lib/whatsapp/coexistence-sync';
 import {
   SERVER_NUMBER_COLUMNS,
   sanitizeWhatsAppNumber,
@@ -193,6 +194,18 @@ export async function POST(request: Request) {
         '[embedded-signup/complete] sync job creation failed:',
         jobError.message
       );
+    } else {
+      try {
+        await processPendingCoexistenceSyncJobs(supabase, {
+          whatsappNumberId: number.id,
+          limit: 2,
+        });
+      } catch (syncError) {
+        console.warn(
+          '[embedded-signup/complete] sync request initiation failed:',
+          syncError instanceof Error ? syncError.message : syncError
+        );
+      }
     }
 
     return NextResponse.json(

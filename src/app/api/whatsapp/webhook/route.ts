@@ -19,6 +19,7 @@ import {
   handleTemplateWebhookChange,
   isTemplateWebhookField,
 } from '@/lib/whatsapp/template-webhook'
+import { processPendingCoexistenceEvents } from '@/lib/whatsapp/coexistence-sync'
 
 // The `after()` callback in POST runs within this route's max duration.
 // Inbound processing can fan out to per-media Meta verification calls, so
@@ -274,6 +275,7 @@ export async function POST(request: Request) {
   after(async () => {
     try {
       await processWebhook(body)
+      await processPendingCoexistenceEvents(supabaseAdmin(), 10)
     } catch (error) {
       console.error('Error processing webhook:', error)
     }

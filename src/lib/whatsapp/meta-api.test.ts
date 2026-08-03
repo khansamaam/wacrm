@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   INTERACTIVE_LIMITS,
+  requestSmbAppDataSync,
   sendInteractiveButtons,
   sendInteractiveList,
 } from "./meta-api";
@@ -264,6 +265,59 @@ describe("sendInteractiveList — validation", () => {
           ],
         },
       },
+    });
+  });
+});
+
+describe("requestSmbAppDataSync", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("posts the expected sync payload for coexistence imports", async () => {
+    let captured: { url: string; method: string; headers: HeadersInit | undefined; body: unknown } | null =
+      null;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = {
+          url,
+          method: init.method ?? "GET",
+          headers: init.headers,
+          body: JSON.parse(String(init.body)),
+        };
+
+        return new Response(
+          JSON.stringify({
+            messaging_product: "whatsapp",
+            request_id: "sync_req_123",
+          }),
+          { status: 200 },
+        );
+      }),
+    );
+
+    const result = await requestSmbAppDataSync({
+      phoneNumberId: "pn_123",
+      accessToken: "permanent-token",
+      syncType: "smb_app_state_sync",
+    });
+
+    expect(result).toEqual({
+      messaging_product: "whatsapp",
+      request_id: "sync_req_123",
+    });
+    expect(captured).not.toBeNull();
+    expect(captured!.url).toContain("/pn_123/smb_app_data");
+    expect(captured!.method).toBe("POST");
+    expect(captured!.headers).toMatchObject({
+      Authorization: "Bearer permanent-token",
+      "Content-Type": "application/json",
+    });
+    expect(captured!.body).toEqual({
+      messaging_product: "whatsapp",
+      sync_type: "smb_app_state_sync",
     });
   });
 });

@@ -3,6 +3,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { resolveConversationByPhone } from '@/lib/whatsapp/resolve-conversation'
 import { sanitizePhoneForMeta } from '@/lib/whatsapp/phone-utils'
 import { findOrCreateContact, resolveAuditUserId } from '@/lib/api/v1/contacts'
+import { decrypt } from '@/lib/whatsapp/encryption'
+import { requestSmbAppDataSync } from '@/lib/whatsapp/meta-api'
 
 type JsonRecord = Record<string, unknown>
 
@@ -15,10 +17,24 @@ interface SyncEventRow {
   attempts: number
 }
 
+interface SyncJobRow {
+  id: string
+  account_id: string
+  whatsapp_number_id: string
+  sync_type: 'history' | 'contacts' | 'app_state'
+  attempts: number
+}
+
 interface NumberIdentity {
   id: string
   display_phone_number: string | null
   metadata: JsonRecord
+}
+
+interface SyncJobNumber {
+  id: string
+  phone_number_id: string
+  access_token: string | null
 }
 
 interface ImportedMessage {
@@ -100,6 +116,121 @@ export async function processPendingCoexistenceEvents(
   }
 
   return { processed, failed }
+}
+
+/**
+ * Kick off Meta's SMB App Data sync requests for onboarded coexistence
+ * numbers. This is distinct from `processPendingCoexistenceEvents`, which
+ * digests the webhooks Meta sends after these requests are accepted.
+ */
+export async function processPendingCoexistenceSyncJobs(
+  db: SupabaseClient,
+  options?: {
+    limit?: number
+    whatsappNumberId?: string
+  },
+): Promise<{ processed: number; failed: number }> {
+  const limit = options?.limit ?? 10
+  let query = db
+    .from('whatsapp_sync_jobs')
+    .select('id, account_id, whatsapp_number_id, sync_type, attempts')
+    .in('status', ['pending', 'failed'])
+    .lt('attempts', 5)
+    .order('requested_at', { ascending: true })
+    .limit(limit)
+
+  if (options?.whatsappNumberId) {
+    query = query.eq('whatsapp_number_id', options.whatsappNumberId)
+  }
+
+  const { data: rows, error } = await query
+  if (error) throw new Error(`Unable to load coexistence sync jobs: ${error.message}`)
+
+  let processed = 0
+  let failed = 0
+
+  for (const rawRow of rows ?? []) {
+    const row = rawRow as unknown as SyncJobRow
+    const claimed = await claimSyncJob(db, row.id, row.attempts)
+    if (!claimed) continue
+
+    try {
+      await processSyncJob(db, row)
+      processed += 1
+    } catch (jobError) {
+      const message = jobError instanceof Error ? jobError.message : String(jobError)
+      await db
+        .from('whatsapp_sync_jobs')
+        .update({
+          status: 'failed',
+          last_error: message.slice(0, 2000),
+        })
+        .eq('id', row.id)
+      failed += 1
+    }
+  }
+
+  return { processed, failed }
+}
+
+async function claimSyncJob(
+  db: SupabaseClient,
+  jobId: string,
+  attempts: number,
+): Promise<boolean> {
+  const { data, error } = await db
+    .from('whatsapp_sync_jobs')
+    .update({
+      status: 'processing',
+      attempts: attempts + 1,
+      started_at: new Date().toISOString(),
+    })
+    .eq('id', jobId)
+    .in('status', ['pending', 'failed'])
+    .select('id')
+    .maybeSingle()
+
+  if (error) throw new Error(`Unable to claim coexistence sync job: ${error.message}`)
+  return Boolean(data)
+}
+
+async function processSyncJob(db: SupabaseClient, job: SyncJobRow): Promise<void> {
+  const { data: number, error } = await db
+    .from('whatsapp_numbers')
+    .select('id, phone_number_id, access_token')
+    .eq('id', job.whatsapp_number_id)
+    .eq('account_id', job.account_id)
+    .single()
+
+  const connectedNumber = number as unknown as SyncJobNumber | null
+  if (error || !connectedNumber?.access_token) {
+    throw new Error('Connected WhatsApp number no longer has an access token')
+  }
+
+  const accessToken = decrypt(connectedNumber.access_token)
+  const syncType =
+    job.sync_type === 'history'
+      ? 'history'
+      : 'smb_app_state_sync'
+  const accepted = await requestSmbAppDataSync({
+    phoneNumberId: connectedNumber.phone_number_id,
+    accessToken,
+    syncType,
+  })
+
+  await db
+    .from('whatsapp_sync_jobs')
+    .update({
+      status: 'completed',
+      processed_count: 1,
+      metadata: {
+        request_id: accepted.request_id,
+        sync_type: syncType,
+      },
+      last_error: null,
+      completed_at: new Date().toISOString(),
+    })
+    .eq('id', job.id)
 }
 
 async function claimEvent(
