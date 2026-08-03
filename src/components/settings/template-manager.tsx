@@ -29,6 +29,7 @@ import { useWhatsAppNumbers } from '@/hooks/use-whatsapp-numbers';
 import { WhatsAppNumberFilter } from '@/components/whatsapp/number-filter';
 import { Card, CardContent } from '@/components/ui/card';
 import { SettingsPanelHead } from './settings-panel-head';
+import { CarouselTemplateEditor } from './carousel-template-editor';
 import {
   Dialog,
   DialogContent,
@@ -47,6 +48,7 @@ import {
 import type {
   MessageTemplate,
   TemplateButton,
+  TemplateCarouselCard,
   TemplateSampleValues,
 } from '@/types';
 import { templateStatusConfig } from '@/lib/template-status';
@@ -66,6 +68,7 @@ const categoryColors: Record<string, string> = {
 };
 
 interface TemplateFormData {
+  template_type: 'standard' | 'carousel';
   name: string;
   category: MessageTemplate['category'];
   language: string;
@@ -77,9 +80,21 @@ interface TemplateFormData {
   body_samples: string[];
   footer_text: string;
   buttons: TemplateButton[];
+  carousel_cards: TemplateCarouselCard[];
+}
+
+function emptyCarouselCard(): TemplateCarouselCard {
+  return {
+    header_type: 'image',
+    header_media_url: '',
+    body_text: '',
+    buttons: [],
+    sample_values: { body: [] },
+  };
 }
 
 const emptyForm: TemplateFormData = {
+  template_type: 'standard',
   name: '',
   category: 'Marketing',
   language: 'en_US',
@@ -91,6 +106,7 @@ const emptyForm: TemplateFormData = {
   body_samples: [],
   footer_text: '',
   buttons: [],
+  carousel_cards: [emptyCarouselCard(), emptyCarouselCard()],
 };
 
 const COMMON_LANGUAGE_CODES = [
@@ -262,6 +278,7 @@ export function TemplateManager() {
       name: form.name.trim(),
       category: form.category,
       language: form.language.trim() || 'en_US',
+      template_type: form.template_type,
       header_type: form.header_format === 'none' ? undefined : form.header_format,
       header_content:
         form.header_format === 'text' ? form.header_content.trim() : undefined,
@@ -274,6 +291,18 @@ export function TemplateManager() {
       buttons: form.buttons.length > 0 ? form.buttons : undefined,
       sample_values:
         Object.keys(sample_values).length > 0 ? sample_values : undefined,
+      carousel_cards:
+        form.template_type === 'carousel'
+          ? form.carousel_cards.map((card) => ({
+              ...card,
+              header_media_url: normalizeMediaUrl(card.header_media_url ?? ''),
+              body_text: card.body_text.trim(),
+              buttons: card.buttons?.length ? card.buttons : undefined,
+              sample_values: card.sample_values?.body?.length
+                ? { body: card.sample_values.body.map((value) => value.trim()) }
+                : undefined,
+            }))
+          : undefined,
       whatsapp_number_id: templateNumberId,
     };
   }
@@ -281,6 +310,7 @@ export function TemplateManager() {
   function openEdit(template: MessageTemplate) {
     setEditingId(template.id);
     setForm({
+      template_type: template.template_type ?? 'standard',
       name: template.name,
       category: template.category,
       language: template.language || 'en_US',
@@ -292,13 +322,19 @@ export function TemplateManager() {
       body_samples: template.sample_values?.body ?? [],
       footer_text: template.footer_text ?? '',
       buttons: template.buttons ?? [],
+      carousel_cards: template.carousel_cards?.length
+        ? template.carousel_cards
+        : [emptyCarouselCard(), emptyCarouselCard()],
     });
     setDialogOpen(true);
   }
 
   function openCreate() {
     setEditingId(null);
-    setForm(emptyForm);
+    setForm({
+      ...emptyForm,
+      carousel_cards: [emptyCarouselCard(), emptyCarouselCard()],
+    });
     setDialogOpen(true);
   }
 
@@ -494,6 +530,40 @@ export function TemplateManager() {
     }));
   }
 
+  async function handleCarouselImageFile(cardIndex: number, file: File) {
+    if (!['image/jpeg', 'image/png'].includes(file.type)) {
+      toast.error(t('toastInvalidImage'));
+      return;
+    }
+    if (file.size > MEDIA_MAX_BYTES_BY_KIND.image) {
+      toast.error(
+        t('toastImageTooLarge', {
+          size: (file.size / 1024 / 1024).toFixed(1),
+        }),
+      );
+      return;
+    }
+    setUploadingHeader(true);
+    try {
+      const { publicUrl } = await uploadAccountMedia('chat-media', file);
+      setForm((prev) => ({
+        ...prev,
+        carousel_cards: prev.carousel_cards.map((card, index) =>
+          index === cardIndex
+            ? { ...card, header_media_url: publicUrl }
+            : card,
+        ),
+      }));
+      toast.success(t('toastUploadSuccess'));
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t('toastUploadFailed'),
+      );
+    } finally {
+      setUploadingHeader(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -583,6 +653,13 @@ export function TemplateManager() {
                       <Badge className={`text-xs border ${status.classes}`}>
                         {status.label}
                       </Badge>
+                      {(template.template_type ?? 'standard') === 'carousel' && (
+                        <Badge variant="outline" className="text-xs">
+                          {t('carouselBadge', {
+                            count: template.carousel_cards?.length ?? 0,
+                          })}
+                        </Badge>
+                      )}
                       {template.language && (
                         <span className="text-xs text-muted-foreground uppercase">
                           {template.language}
@@ -709,6 +786,36 @@ export function TemplateManager() {
 
           <div className="space-y-4 py-2">
             <div className="space-y-2">
+              <Label className="text-muted-foreground">{t('templateType')}</Label>
+              <Select
+                value={form.template_type}
+                disabled={editingId !== null}
+                onValueChange={(value) => {
+                  const templateType = value as TemplateFormData['template_type'];
+                  setForm({
+                    ...form,
+                    template_type: templateType,
+                    category:
+                      templateType === 'carousel' ? 'Marketing' : form.category,
+                  });
+                }}
+              >
+                <SelectTrigger className="w-full bg-muted border-border text-foreground">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-popover border-border">
+                  <SelectItem value="standard">{t('typeStandard')}</SelectItem>
+                  <SelectItem value="carousel">{t('typeCarousel')}</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                {form.template_type === 'carousel'
+                  ? t('carouselTypeHint')
+                  : t('standardTypeHint')}
+              </p>
+            </div>
+
+            <div className="space-y-2">
               <Label className="text-muted-foreground">{t('templateName')}</Label>
               <Input
                 placeholder={t('namePlaceholder')}
@@ -729,6 +836,7 @@ export function TemplateManager() {
                 <Label className="text-muted-foreground">{t('category')}</Label>
                 <Select
                   value={form.category}
+                  disabled={form.template_type === 'carousel'}
                   onValueChange={(val) =>
                     setForm({
                       ...form,
@@ -780,7 +888,7 @@ export function TemplateManager() {
               </div>
             </div>
 
-            <div className="space-y-2">
+            {form.template_type === 'standard' && <div className="space-y-2">
               <Label className="text-muted-foreground">{t('header')}</Label>
               <Select
                 value={form.header_format}
@@ -913,7 +1021,7 @@ export function TemplateManager() {
                   </p>
                 </div>
               )}
-            </div>
+            </div>}
 
             <div className="space-y-2">
               <Label className="text-muted-foreground">{t('bodyText')}</Label>
@@ -958,6 +1066,18 @@ export function TemplateManager() {
               )}
             </div>
 
+            {form.template_type === 'carousel' && (
+              <CarouselTemplateEditor
+                cards={form.carousel_cards}
+                uploading={uploadingHeader}
+                onChange={(carousel_cards) =>
+                  setForm((prev) => ({ ...prev, carousel_cards }))
+                }
+                onUploadImage={handleCarouselImageFile}
+              />
+            )}
+
+            {form.template_type === 'standard' && <>
             <div className="space-y-2">
               <Label className="text-muted-foreground">{t('footer')}</Label>
               <Input
@@ -1104,6 +1224,7 @@ export function TemplateManager() {
                 </div>
               )}
             </div>
+            </>}
           </div>
 
           <DialogFooter className="bg-popover border-border">

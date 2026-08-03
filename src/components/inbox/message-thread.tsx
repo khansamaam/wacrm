@@ -680,6 +680,7 @@ export function MessageThread({
               headerText: values.headerText,
               headerMediaUrl: values.headerMediaUrl,
               buttonParams: values.buttonParams,
+              carouselCards: values.carouselCards,
             },
             template_params: values.body,
             content_text: renderedBody,

@@ -516,6 +516,7 @@ export async function sendTemplateMessage(
       headerMediaUrl: messageParams?.headerMediaUrl,
       headerMediaId: messageParams?.headerMediaId,
       buttonParams: messageParams?.buttonParams,
+      carouselCards: messageParams?.carouselCards,
     })
     if (components.length > 0) {
       templatePayload.components = components

@@ -1,5 +1,5 @@
-import type { AccountRole } from "@/lib/auth/roles";
-import type { InteractiveMessagePayload } from "@/lib/whatsapp/interactive";
+import type { AccountRole } from '@/lib/auth/roles';
+import type { InteractiveMessagePayload } from '@/lib/whatsapp/interactive';
 
 export type {
   InteractiveMessagePayload,
@@ -8,7 +8,7 @@ export type {
   InteractiveButton,
   InteractiveListRow,
   InteractiveListSection,
-} from "@/lib/whatsapp/interactive";
+} from '@/lib/whatsapp/interactive';
 
 export interface Profile {
   id: string;
@@ -90,7 +90,7 @@ export interface AccountInvitation {
   id: string;
   account_id: string;
   /** Roles offered via invite — owner is never offered. */
-  role: Exclude<AccountRole, "owner">;
+  role: Exclude<AccountRole, 'owner'>;
   created_by_user_id: string | null;
   label: string | null;
   created_at: string;
@@ -221,7 +221,8 @@ export type ContentType =
   | 'template'
   /** Customer tapped a reply button or list row on a message we sent. */
   | 'interactive';
-export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+export type MessageStatus =
+  'sending' | 'sent' | 'delivered' | 'read' | 'failed';
 
 export interface TemplateMessageButtonSnapshot {
   type: 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER' | 'COPY_CODE';
@@ -243,13 +244,20 @@ export interface TemplateMessageSnapshot {
   body_text: string;
   footer_text?: string;
   buttons?: TemplateMessageButtonSnapshot[];
+  carousel_cards?: Array<{
+    header_type: 'image' | 'video';
+    header_media_url?: string;
+    body_text: string;
+    buttons?: TemplateMessageButtonSnapshot[];
+  }>;
 }
 
 export interface Message {
   id: string;
   conversation_id: string;
   whatsapp_number_id?: string | null;
-  message_origin?: 'cloud_api' | 'business_app' | 'history_sync' | 'external_api';
+  message_origin?:
+    'cloud_api' | 'business_app' | 'history_sync' | 'external_api';
   sender_type: SenderType;
   sender_id?: string;
   content_type: ContentType;
@@ -325,10 +333,7 @@ export interface WhatsAppConfig {
 
 export type WhatsAppConnectionMethod = 'cloud_api' | 'coexistence';
 export type WhatsAppNumberStatus =
-  | 'pending'
-  | 'connected'
-  | 'error'
-  | 'disconnected';
+  'pending' | 'connected' | 'error' | 'disconnected';
 
 /** Token-free number record returned by `/api/whatsapp/numbers`. */
 export interface WhatsAppNumber {
@@ -352,17 +357,9 @@ export interface WhatsAppNumber {
   platform_type?: string | null;
   coexistence_onboarded_at?: string | null;
   history_sync_status:
-    | 'not_requested'
-    | 'pending'
-    | 'processing'
-    | 'completed'
-    | 'failed';
+    'not_requested' | 'pending' | 'processing' | 'completed' | 'failed';
   contacts_sync_status:
-    | 'not_requested'
-    | 'pending'
-    | 'processing'
-    | 'completed'
-    | 'failed';
+    'not_requested' | 'pending' | 'processing' | 'completed' | 'failed';
   created_at: string;
   updated_at: string;
 }
@@ -392,6 +389,18 @@ export interface TemplateSampleValues {
   header?: string[];
 }
 
+export type MessageTemplateType = 'standard' | 'carousel';
+
+/** One media card in a Meta carousel message template. */
+export interface TemplateCarouselCard {
+  header_type: 'image' | 'video';
+  header_media_url?: string;
+  header_handle?: string;
+  body_text: string;
+  buttons?: TemplateButton[];
+  sample_values?: Pick<TemplateSampleValues, 'body'>;
+}
+
 export interface MessageTemplate {
   id: string;
   waba_id?: string | null;
@@ -399,6 +408,7 @@ export interface MessageTemplate {
   name: string;
   category: 'Marketing' | 'Utility' | 'Authentication';
   language?: string;
+  template_type?: MessageTemplateType;
   header_type?: 'text' | 'image' | 'video' | 'document';
   header_content?: string;
   header_handle?: string;
@@ -407,6 +417,7 @@ export interface MessageTemplate {
   footer_text?: string;
   buttons?: TemplateButton[];
   sample_values?: TemplateSampleValues;
+  carousel_cards?: TemplateCarouselCard[];
   status?: MessageTemplateStatus;
   meta_template_id?: string;
   rejection_reason?: string;
@@ -459,8 +470,10 @@ export interface Deal {
   assignee?: Profile;
 }
 
-export type BroadcastStatus = 'draft' | 'scheduled' | 'sending' | 'sent' | 'failed';
-export type RecipientStatus = 'pending' | 'sent' | 'delivered' | 'read' | 'replied' | 'failed';
+export type BroadcastStatus =
+  'draft' | 'scheduled' | 'sending' | 'sent' | 'failed';
+export type RecipientStatus =
+  'pending' | 'sent' | 'delivered' | 'read' | 'replied' | 'failed';
 
 export interface Broadcast {
   id: string;
@@ -622,10 +635,7 @@ export interface WaitStepConfig {
 }
 
 export type ConditionSubject =
-  | 'contact_field'
-  | 'tag_presence'
-  | 'message_content'
-  | 'time_of_day';
+  'contact_field' | 'tag_presence' | 'message_content' | 'time_of_day';
 
 export interface ConditionStepConfig {
   subject: ConditionSubject;

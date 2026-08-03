@@ -10,7 +10,7 @@ import {
   type TemplatePayload,
 } from '@/lib/whatsapp/template-validators'
 import { buildMetaTemplatePayload } from '@/lib/whatsapp/template-components'
-import { ensureImageHeaderHandle } from '@/lib/whatsapp/template-header-handle'
+import { ensureCarouselHeaderHandles, ensureImageHeaderHandle } from '@/lib/whatsapp/template-header-handle'
 
 /**
  * Per-template lifecycle endpoint.
@@ -164,6 +164,7 @@ export async function PATCH(
       // (Meta replaces components wholesale). Derive from header_media_url.
       try {
         await ensureImageHeaderHandle(payload, accessToken, config.meta_app_id)
+        await ensureCarouselHeaderHandles(payload, accessToken, config.meta_app_id)
       } catch (e) {
         return NextResponse.json(
           { error: e instanceof Error ? e.message : 'Header image upload failed.' },
@@ -197,6 +198,7 @@ export async function PATCH(
       .from('message_templates')
       .update({
         category: payload.category,
+        template_type: payload.template_type ?? 'standard',
         header_type: payload.header_type ?? null,
         header_content: payload.header_content ?? null,
         header_media_url: payload.header_media_url ?? null,
@@ -205,6 +207,7 @@ export async function PATCH(
         footer_text: payload.footer_text ?? null,
         buttons: payload.buttons ?? null,
         sample_values: payload.sample_values ?? null,
+        carousel_cards: payload.carousel_cards ?? null,
         status: 'PENDING',
         submission_error: null,
         rejection_reason: null,

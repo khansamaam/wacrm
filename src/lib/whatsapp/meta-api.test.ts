@@ -4,6 +4,7 @@ import {
   requestSmbAppDataSync,
   sendInteractiveButtons,
   sendInteractiveList,
+  sendTemplateMessage,
 } from "./meta-api";
 
 // All assertions in this file run BEFORE the network call. We stub fetch
@@ -264,6 +265,82 @@ describe("sendInteractiveList — validation", () => {
             },
           ],
         },
+      },
+    });
+  });
+});
+
+describe("sendTemplateMessage — carousel parameters", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("forwards per-card media overrides into Meta's carousel payload", async () => {
+    let capturedBody: Record<string, unknown> | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        capturedBody = JSON.parse(String(init.body));
+        return new Response(
+          JSON.stringify({ messages: [{ id: "wamid.CAROUSEL" }] }),
+          { status: 200 },
+        );
+      }),
+    );
+
+    await sendTemplateMessage({
+      phoneNumberId: "test-phone",
+      accessToken: "test-token",
+      to: "1234567890",
+      templateName: "offers",
+      template: {
+        id: "template-1",
+        user_id: "user-1",
+        name: "offers",
+        category: "Marketing",
+        language: "en_US",
+        template_type: "carousel",
+        body_text: "Choose an offer.",
+        carousel_cards: [
+          {
+            header_type: "image",
+            body_text: "Offer one",
+          },
+        ],
+        created_at: "2026-01-01T00:00:00Z",
+      },
+      messageParams: {
+        carouselCards: [
+          { headerMediaUrl: "https://cdn.example.com/offer-one.jpg" },
+        ],
+      },
+    });
+
+    expect(capturedBody).toMatchObject({
+      template: {
+        components: [
+          {
+            type: "carousel",
+            cards: [
+              {
+                card_index: 0,
+                components: [
+                  {
+                    type: "header",
+                    parameters: [
+                      {
+                        type: "image",
+                        image: {
+                          link: "https://cdn.example.com/offer-one.jpg",
+                        },
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
       },
     });
   });

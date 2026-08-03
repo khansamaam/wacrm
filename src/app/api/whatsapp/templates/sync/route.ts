@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import { resolveWhatsAppNumber, WhatsAppNumberError } from '@/lib/whatsapp/numbers'
 import { normalizeStatus } from '@/lib/whatsapp/template-status-normalize'
-import type { TemplateButton, TemplateSampleValues } from '@/types'
+import type { TemplateButton, TemplateCarouselCard, TemplateSampleValues } from '@/types'
 
 /**
  * Sync message templates from Meta → local message_templates table.
@@ -34,11 +34,35 @@ interface MetaTemplateComponent {
   text?: string
   format?: string
   buttons?: MetaButton[]
+  cards?: { components?: MetaTemplateComponent[] }[]
   example?: {
     header_text?: string[]
     header_handle?: string[]
     body_text?: string[][]
   }
+}
+
+function parseCarouselCards(
+  component: MetaTemplateComponent | undefined,
+): TemplateCarouselCard[] | null {
+  if (!component?.cards?.length) return null
+  const cards: TemplateCarouselCard[] = []
+  for (const card of component.cards) {
+    const header = card.components?.find((item) => item.type === 'HEADER')
+    const body = card.components?.find((item) => item.type === 'BODY')
+    const buttons = card.components?.find((item) => item.type === 'BUTTONS')
+    const format = header?.format?.toLowerCase()
+    if ((format !== 'image' && format !== 'video') || !body?.text) continue
+    const samples = body.example?.body_text?.[0]
+    cards.push({
+      header_type: format,
+      header_handle: header?.example?.header_handle?.[0],
+      body_text: body.text,
+      buttons: parseButtons(buttons?.buttons),
+      sample_values: samples?.length ? { body: samples } : undefined,
+    })
+  }
+  return cards.length ? cards : null
 }
 
 interface MetaTemplate {
@@ -222,9 +246,11 @@ export async function POST(request: Request) {
       const header = (t.components ?? []).find((c) => c.type === 'HEADER')
       const footer = (t.components ?? []).find((c) => c.type === 'FOOTER')
       const buttons = (t.components ?? []).find((c) => c.type === 'BUTTONS')
+      const carousel = (t.components ?? []).find((c) => c.type === 'CAROUSEL')
 
       const parsedButtons = parseButtons(buttons?.buttons)
       const sampleValues = extractSampleValues(body, header)
+      const carouselCards = parseCarouselCards(carousel)
 
       const headerFormat = header?.format?.toUpperCase()
       const headerType =
@@ -245,6 +271,7 @@ export async function POST(request: Request) {
         name: t.name,
         category: normalizeCategory(t.category),
         language: t.language,
+        template_type: carouselCards ? 'carousel' : 'standard',
         header_type: headerType,
         header_content: header?.text ?? null,
         header_handle: header?.example?.header_handle?.[0] ?? null,
@@ -252,6 +279,7 @@ export async function POST(request: Request) {
         footer_text: footer?.text ?? null,
         buttons: parsedButtons.length ? parsedButtons : null,
         sample_values: sampleValues,
+        carousel_cards: carouselCards,
         status: normalizeStatus(t.status),
         meta_template_id: t.id,
         quality_score: normalizeQualityScore(t.quality_score),

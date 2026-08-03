@@ -190,6 +190,34 @@ function TemplateMessageContent({
 
   return (
     <div className="min-w-64 max-w-sm">
+      {payload.carousel_cards?.length ? (
+        <div className="mb-2 flex max-w-[min(72vw,40rem)] snap-x gap-2 overflow-x-auto pb-1">
+          {payload.carousel_cards.map((card, cardIndex) => (
+            <div
+              key={cardIndex}
+              className="w-56 shrink-0 snap-start overflow-hidden rounded-lg bg-black/10"
+            >
+              {card.header_type === "image" && card.header_media_url ? (
+                <MediaImage url={card.header_media_url} alt="" />
+              ) : null}
+              {card.header_type === "video" && card.header_media_url ? (
+                <video src={card.header_media_url} controls className="max-h-48 w-full" />
+              ) : null}
+              <div className="space-y-2 p-2">
+                <WhatsAppTemplateText text={card.body_text} />
+                {card.buttons?.map((button, buttonIndex) => (
+                  <div
+                    key={buttonIndex}
+                    className="rounded-md bg-white/15 px-2 py-1.5 text-center text-xs font-medium text-white"
+                  >
+                    {button.text}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
       {payload.header_type === "image" && payload.header_media_url ? (
         <div className="mb-2 overflow-hidden rounded-lg">
           <MediaImage url={payload.header_media_url} alt="" />

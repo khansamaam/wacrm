@@ -49,19 +49,19 @@ describe('validateBody', () => {
     expect(() => validateBody('   ')).toThrow(/required/);
   });
   it('rejects > 1024 chars', () => {
-    expect(() => validateBody('x'.repeat(TEMPLATE_LIMITS.bodyMaxLength + 1))).toThrow(
-      /exceeds 1024/,
-    );
+    expect(() =>
+      validateBody('x'.repeat(TEMPLATE_LIMITS.bodyMaxLength + 1))
+    ).toThrow(/exceeds 1024/);
   });
   it('rejects non-contiguous variables', () => {
     expect(() => validateBody('Hi {{1}} {{3}}')).toThrow(/contiguous/);
   });
   it('rejects variables at the beginning or end', () => {
     expect(() => validateBody('{{1}}, your order is ready.')).toThrow(
-      /beginning or end/,
+      /beginning or end/
     );
     expect(() => validateBody('Your order number is {{1}}')).toThrow(
-      /beginning or end/,
+      /beginning or end/
     );
   });
   it('accepts contiguous variables', () => {
@@ -84,27 +84,27 @@ describe('validateFooter', () => {
 describe('validateHeader', () => {
   it('text header requires content', () => {
     expect(() =>
-      validateHeader({ header_type: 'text', header_content: '' }),
+      validateHeader({ header_type: 'text', header_content: '' })
     ).toThrow(/requires header_content/);
   });
   it('text header rejects > 60 chars', () => {
     expect(() =>
-      validateHeader({ header_type: 'text', header_content: 'x'.repeat(61) }),
+      validateHeader({ header_type: 'text', header_content: 'x'.repeat(61) })
     ).toThrow(/60 chars/);
   });
   it('text header rejects more than one variable', () => {
     expect(() =>
-      validateHeader({ header_type: 'text', header_content: '{{1}} {{2}}' }),
+      validateHeader({ header_type: 'text', header_content: '{{1}} {{2}}' })
     ).toThrow(/at most one variable/);
   });
   it('text header requires variable to be {{1}}', () => {
     expect(() =>
-      validateHeader({ header_type: 'text', header_content: 'Hello {{2}}' }),
+      validateHeader({ header_type: 'text', header_content: 'Hello {{2}}' })
     ).toThrow(/must be \{\{1\}\}/);
   });
   it('image header requires a URL or handle', () => {
     expect(() => validateHeader({ header_type: 'image' })).toThrow(
-      /requires either/,
+      /requires either/
     );
   });
   it('image header accepts a URL', () => {
@@ -112,7 +112,7 @@ describe('validateHeader', () => {
       validateHeader({
         header_type: 'image',
         header_media_url: 'https://example.com/img.jpg',
-      }),
+      })
     ).not.toThrow();
   });
   it('image header rejects a non-URL string', () => {
@@ -120,7 +120,7 @@ describe('validateHeader', () => {
       validateHeader({
         header_type: 'image',
         header_media_url: 'not a url',
-      }),
+      })
     ).toThrow(/valid URL/);
   });
 });
@@ -143,7 +143,7 @@ describe('validateButtons', () => {
         { type: 'URL', text: 'a', url: 'https://x' },
         { type: 'URL', text: 'b', url: 'https://x' },
         { type: 'URL', text: 'c', url: 'https://x' },
-      ]),
+      ])
     ).toThrow(/At most 2 URL/);
   });
   it('rejects > 1 PHONE_NUMBER', () => {
@@ -151,7 +151,7 @@ describe('validateButtons', () => {
       validateButtons([
         { type: 'PHONE_NUMBER', text: 'a', phone_number: '+1' },
         { type: 'PHONE_NUMBER', text: 'b', phone_number: '+2' },
-      ]),
+      ])
     ).toThrow(/At most 1 PHONE_NUMBER/);
   });
   it('rejects > 1 COPY_CODE', () => {
@@ -159,7 +159,7 @@ describe('validateButtons', () => {
       validateButtons([
         { type: 'COPY_CODE', text: 'a', example: 'X' },
         { type: 'COPY_CODE', text: 'b', example: 'Y' },
-      ]),
+      ])
     ).toThrow(/At most 1 COPY_CODE/);
   });
   it('rejects QUICK_REPLY interleaved with CTA buttons', () => {
@@ -168,7 +168,7 @@ describe('validateButtons', () => {
         { type: 'QUICK_REPLY', text: 'A' },
         { type: 'URL', text: 'B', url: 'https://x' },
         { type: 'QUICK_REPLY', text: 'C' },
-      ]),
+      ])
     ).toThrow(/cannot be interleaved/);
   });
   it('accepts QUICK_REPLY then CTA in correct order', () => {
@@ -177,29 +177,27 @@ describe('validateButtons', () => {
         { type: 'QUICK_REPLY', text: 'A' },
         { type: 'QUICK_REPLY', text: 'B' },
         { type: 'URL', text: 'C', url: 'https://x' },
-      ]),
+      ])
     ).not.toThrow();
   });
   it('rejects empty button text', () => {
-    expect(() =>
-      validateButtons([{ type: 'QUICK_REPLY', text: '' }]),
-    ).toThrow(/missing text/);
+    expect(() => validateButtons([{ type: 'QUICK_REPLY', text: '' }])).toThrow(
+      /missing text/
+    );
   });
   it('rejects URL button without url', () => {
     expect(() =>
-      validateButtons([{ type: 'URL', text: 'Go', url: '' }]),
+      validateButtons([{ type: 'URL', text: 'Go', url: '' }])
     ).toThrow(/missing url/);
   });
   it('rejects URL button with invalid url', () => {
     expect(() =>
-      validateButtons([{ type: 'URL', text: 'Go', url: 'not-a-url' }]),
+      validateButtons([{ type: 'URL', text: 'Go', url: 'not-a-url' }])
     ).toThrow(/invalid url/);
   });
   it('rejects URL with {{1}} but no example', () => {
     expect(() =>
-      validateButtons([
-        { type: 'URL', text: 'Go', url: 'https://x/{{1}}' },
-      ]),
+      validateButtons([{ type: 'URL', text: 'Go', url: 'https://x/{{1}}' }])
     ).toThrow(/Meta requires an example/);
   });
   it('rejects URL with non-{{1}} variable', () => {
@@ -211,19 +209,19 @@ describe('validateButtons', () => {
           url: 'https://x/{{2}}',
           example: 'foo',
         },
-      ]),
+      ])
     ).toThrow(/must be \{\{1\}\}/);
   });
   it('rejects PHONE_NUMBER without phone_number', () => {
     expect(() =>
       validateButtons([
         { type: 'PHONE_NUMBER', text: 'Call', phone_number: '' },
-      ]),
+      ])
     ).toThrow(/missing phone_number/);
   });
   it('rejects COPY_CODE without example', () => {
     expect(() =>
-      validateButtons([{ type: 'COPY_CODE', text: 'Copy', example: '' }]),
+      validateButtons([{ type: 'COPY_CODE', text: 'Copy', example: '' }])
     ).toThrow(/missing example/);
   });
 });
@@ -234,8 +232,8 @@ describe('validateSampleValues', () => {
       validateSampleValues(
         { ...baseValid, body_text: 'Hi {{1}}', sample_values: { body: [] } },
         1,
-        0,
-      ),
+        0
+      )
     ).toThrow(/exactly 1 sample/);
   });
   it('rejects empty sample values', () => {
@@ -243,8 +241,8 @@ describe('validateSampleValues', () => {
       validateSampleValues(
         { ...baseValid, sample_values: { body: ['  '] } },
         1,
-        0,
-      ),
+        0
+      )
     ).toThrow(/empty/);
   });
   it('accepts matching counts', () => {
@@ -252,8 +250,8 @@ describe('validateSampleValues', () => {
       validateSampleValues(
         { ...baseValid, sample_values: { body: ['John'] } },
         1,
-        0,
-      ),
+        0
+      )
     ).not.toThrow();
   });
 });
@@ -271,7 +269,7 @@ describe('validateTemplatePayload — integration', () => {
         ...baseValid,
         body_text: 'Hi {{1}}, order {{2}} confirmed.',
         sample_values: { body: ['John', 'ORD-42'] },
-      }),
+      })
     ).toEqual({ bodyVarCount: 2, headerVarCount: 0 });
   });
   it('throws on missing samples for body variables', () => {
@@ -279,7 +277,59 @@ describe('validateTemplatePayload — integration', () => {
       validateTemplatePayload({
         ...baseValid,
         body_text: 'Hi {{1}}, your order is ready.',
-      }),
+      })
     ).toThrow(/exactly 1 sample/);
+  });
+
+  it('accepts a valid two-card Marketing carousel', () => {
+    expect(() =>
+      validateTemplatePayload({
+        ...baseValid,
+        category: 'Marketing',
+        template_type: 'carousel',
+        carousel_cards: [
+          {
+            header_type: 'image',
+            header_media_url: 'https://example.com/one.jpg',
+            body_text: 'Offer one for {{1}} today.',
+            sample_values: { body: ['Sara'] },
+            buttons: [{ type: 'QUICK_REPLY', text: 'Choose' }],
+          },
+          {
+            header_type: 'image',
+            header_media_url: 'https://example.com/two.jpg',
+            body_text: 'Offer two for {{1}} today.',
+            sample_values: { body: ['Sara'] },
+            buttons: [{ type: 'QUICK_REPLY', text: 'Choose' }],
+          },
+        ],
+      })
+    ).not.toThrow();
+  });
+
+  it('rejects carousel cards with mismatched button structures', () => {
+    expect(() =>
+      validateTemplatePayload({
+        ...baseValid,
+        category: 'Marketing',
+        template_type: 'carousel',
+        carousel_cards: [
+          {
+            header_type: 'image',
+            header_media_url: 'https://example.com/one.jpg',
+            body_text: 'First offer.',
+            buttons: [{ type: 'QUICK_REPLY', text: 'Choose' }],
+          },
+          {
+            header_type: 'image',
+            header_media_url: 'https://example.com/two.jpg',
+            body_text: 'Second offer.',
+            buttons: [
+              { type: 'URL', text: 'Open', url: 'https://example.com' },
+            ],
+          },
+        ],
+      })
+    ).toThrow(/same number and sequence/);
   });
 });

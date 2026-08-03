@@ -8,7 +8,7 @@ import { renderTemplateBody } from './template-render';
 
 function renderHeaderText(
   template: MessageTemplate,
-  params: SendTimeParams,
+  params: SendTimeParams
 ): string | undefined {
   if (template.header_type !== 'text' || !template.header_content) {
     return undefined;
@@ -21,7 +21,7 @@ function renderHeaderText(
 function snapshotButton(
   button: NonNullable<MessageTemplate['buttons']>[number],
   index: number,
-  params: SendTimeParams,
+  params: SendTimeParams
 ): TemplateMessageButtonSnapshot {
   const override = params.buttonParams?.[index]?.trim();
   switch (button.type) {
@@ -29,7 +29,10 @@ function snapshotButton(
       return {
         type: button.type,
         text: button.text,
-        url: button.url.replace(/\{\{1\}\}/g, override || button.example || '{{1}}'),
+        url: button.url.replace(
+          /\{\{1\}\}/g,
+          override || button.example || '{{1}}'
+        ),
       };
     case 'PHONE_NUMBER':
       return {
@@ -51,15 +54,26 @@ function snapshotButton(
 export function buildTemplateMessageSnapshot(
   template: MessageTemplate,
   bodyText: string,
-  params: SendTimeParams = {},
+  params: SendTimeParams = {}
 ): TemplateMessageSnapshot {
   const mediaHeader =
     template.header_type === 'image' ||
     template.header_type === 'video' ||
     template.header_type === 'document';
   const buttons = template.buttons?.map((button, index) =>
-    snapshotButton(button, index, params),
+    snapshotButton(button, index, params)
   );
+  const carouselCards = template.carousel_cards?.map((card, cardIndex) => {
+    const cardParams = params.carouselCards?.[cardIndex] ?? {};
+    return {
+      header_type: card.header_type,
+      header_media_url: cardParams.headerMediaUrl || card.header_media_url,
+      body_text: renderTemplateBody(card.body_text, cardParams.body ?? []),
+      buttons: card.buttons?.map((button, buttonIndex) =>
+        snapshotButton(button, buttonIndex, cardParams)
+      ),
+    };
+  });
 
   return {
     header_type: template.header_type,
@@ -70,5 +84,6 @@ export function buildTemplateMessageSnapshot(
     body_text: bodyText,
     footer_text: template.footer_text,
     buttons: buttons?.length ? buttons : undefined,
+    carousel_cards: carouselCards?.length ? carouselCards : undefined,
   };
 }

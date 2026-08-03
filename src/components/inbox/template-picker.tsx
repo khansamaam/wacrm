@@ -29,6 +29,11 @@ export interface TemplateSendValues {
   headerText?: string;
   headerMediaUrl?: string;
   buttonParams?: Record<number, string>;
+  carouselCards?: Array<{
+    body: string[];
+    headerMediaUrl?: string;
+    buttonParams?: Record<number, string>;
+  }>;
 }
 
 interface TemplatePickerProps {
@@ -78,6 +83,11 @@ function collectVariableSlots(template: MessageTemplate): {
   headerVarCount: number;
   mediaHeaderType: MediaHeaderType | null;
   urlButtonSlots: UrlButtonSlot[];
+  carouselCards: Array<{
+    bodyVars: number[];
+    mediaHeaderType: "image" | "video";
+    urlButtonSlots: UrlButtonSlot[];
+  }>;
 } {
   const bodyVars = extractVariableIndices(template.body_text);
   const headerVarCount =
@@ -93,7 +103,16 @@ function collectVariableSlots(template: MessageTemplate): {
       urlButtonSlots.push({ index: i, text: b.text, url: b.url });
     }
   });
-  return { bodyVars, headerVarCount, mediaHeaderType, urlButtonSlots };
+  const carouselCards = (template.carousel_cards ?? []).map((card) => ({
+    bodyVars: extractVariableIndices(card.body_text),
+    mediaHeaderType: card.header_type,
+    urlButtonSlots: (card.buttons ?? []).flatMap((button, index) =>
+      button.type === "URL" && extractVariableIndices(button.url).length > 0
+        ? [{ index, text: button.text, url: button.url }]
+        : [],
+    ),
+  }));
+  return { bodyVars, headerVarCount, mediaHeaderType, urlButtonSlots, carouselCards };
 }
 
 export function TemplatePicker({
@@ -110,6 +129,9 @@ export function TemplatePicker({
   const [headerText, setHeaderText] = useState<string>("");
   const [headerMediaUrl, setHeaderMediaUrl] = useState<string>("");
   const [buttonParams, setButtonParams] = useState<Record<number, string>>({});
+  const [carouselParams, setCarouselParams] = useState<
+    NonNullable<TemplateSendValues["carouselCards"]>
+  >([]);
 
   useEffect(() => {
     if (!open) return;
@@ -163,6 +185,7 @@ export function TemplatePicker({
     setHeaderText("");
     setHeaderMediaUrl("");
     setButtonParams({});
+    setCarouselParams([]);
   }
 
   function handleOpenChange(next: boolean) {
@@ -177,8 +200,20 @@ export function TemplatePicker({
       slots.headerVarCount === 0 &&
       slots.mediaHeaderType === null &&
       slots.urlButtonSlots.length === 0;
-    if (noInputsNeeded) {
-      onSelect(template, { body: [] });
+    const carouselNeedsInput = slots.carouselCards.some(
+      (card, index) =>
+        !isValidHttpUrl(template.carousel_cards?.[index]?.header_media_url ?? "") ||
+        card.bodyVars.length > 0 ||
+        card.urlButtonSlots.length > 0,
+    );
+    if (noInputsNeeded && !carouselNeedsInput) {
+      onSelect(template, {
+        body: [],
+        carouselCards: template.carousel_cards?.map((card) => ({
+          body: [],
+          headerMediaUrl: card.header_media_url,
+        })),
+      });
       handleOpenChange(false);
       return;
     }
@@ -187,6 +222,13 @@ export function TemplatePicker({
     setHeaderText("");
     setHeaderMediaUrl(template.header_media_url ?? "");
     setButtonParams({});
+    setCarouselParams(
+      (template.carousel_cards ?? []).map((card, index) => ({
+        body: new Array(slots.carouselCards[index]?.bodyVars.length ?? 0).fill(""),
+        headerMediaUrl: card.header_media_url ?? "",
+        buttonParams: {},
+      })),
+    );
   }
 
   function confirm() {
@@ -201,6 +243,7 @@ export function TemplatePicker({
         Object.entries(buttonParams).map(([k, v]) => [Number(k), v.trim()]),
       );
     }
+    if (carouselParams.length > 0) values.carouselCards = carouselParams;
     onSelect(selected, values);
     handleOpenChange(false);
   }
@@ -213,7 +256,20 @@ export function TemplatePicker({
     (slots.mediaHeaderType === null || isValidHttpUrl(headerMediaUrl.trim())) &&
     slots.urlButtonSlots.every(
       (s) => (buttonParams[s.index] ?? "").trim().length > 0,
-    );
+    ) &&
+    slots.carouselCards.every((cardSlots, cardIndex) => {
+      const values = carouselParams[cardIndex];
+      return (
+        !!values &&
+        isValidHttpUrl(values.headerMediaUrl?.trim() ?? "") &&
+        cardSlots.bodyVars.every(
+          (_, index) => (values.body[index] ?? "").trim().length > 0,
+        ) &&
+        cardSlots.urlButtonSlots.every(
+          (button) => (values.buttonParams?.[button.index] ?? "").trim().length > 0,
+        )
+      );
+    });
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -289,6 +345,66 @@ export function TemplatePicker({
                 </p>
               )}
             </div>
+            {(selected.template_type ?? "standard") === "carousel" &&
+              selected.carousel_cards?.map((card, cardIndex) => {
+                const cardSlots = slots?.carouselCards[cardIndex];
+                const values = carouselParams[cardIndex];
+                if (!cardSlots || !values) return null;
+                return (
+                  <div key={cardIndex} className="space-y-2 rounded-md border border-border bg-background/50 p-3">
+                    <p className="text-xs font-medium text-popover-foreground">{`Card ${cardIndex + 1}`}</p>
+                    <Input
+                      type="url"
+                      value={values.headerMediaUrl ?? ""}
+                      onChange={(event) => {
+                        const next = [...carouselParams];
+                        next[cardIndex] = { ...values, headerMediaUrl: event.target.value };
+                        setCarouselParams(next);
+                      }}
+                      placeholder={t("mediaHeaderUrlPlaceholder")}
+                      className="border-border bg-muted text-foreground"
+                    />
+                    {isValidHttpUrl(values.headerMediaUrl?.trim() ?? "") && card.header_type === "image" && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={values.headerMediaUrl} alt="" className="max-h-32 rounded-md border border-border object-contain" />
+                    )}
+                    <p className="whitespace-pre-wrap text-sm text-popover-foreground">
+                      {renderBodyPreview(card.body_text, values.body)}
+                    </p>
+                    {cardSlots.bodyVars.map((variable, index) => (
+                      <Input
+                        key={variable}
+                        value={values.body[index] ?? ""}
+                        onChange={(event) => {
+                          const next = [...carouselParams];
+                          const body = [...values.body];
+                          body[index] = event.target.value;
+                          next[cardIndex] = { ...values, body };
+                          setCarouselParams(next);
+                        }}
+                        placeholder={`Card ${cardIndex + 1} body {{${variable}}}`}
+                        className="border-border bg-muted text-foreground"
+                      />
+                    ))}
+                    {cardSlots.urlButtonSlots.map((button) => (
+                      <Input
+                        key={button.index}
+                        value={values.buttonParams?.[button.index] ?? ""}
+                        onChange={(event) => {
+                          const next = [...carouselParams];
+                          next[cardIndex] = {
+                            ...values,
+                            buttonParams: { ...values.buttonParams, [button.index]: event.target.value },
+                          };
+                          setCarouselParams(next);
+                        }}
+                        placeholder={`Value for "${button.text}" URL {{1}}`}
+                        className="border-border bg-muted text-foreground"
+                      />
+                    ))}
+                  </div>
+                );
+              })}
             {slots && slots.headerVarCount > 0 && (
               <div className="space-y-1">
                 <Label className="text-xs text-popover-foreground">

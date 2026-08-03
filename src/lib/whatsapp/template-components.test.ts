@@ -16,9 +16,7 @@ describe('buildMetaTemplatePayload', () => {
       name: 'order_confirmation',
       category: 'UTILITY',
       language: 'en_US',
-      components: [
-        { type: 'BODY', text: 'Your order is on its way.' },
-      ],
+      components: [{ type: 'BODY', text: 'Your order is on its way.' }],
     });
   });
 
@@ -81,12 +79,17 @@ describe('buildMetaTemplatePayload', () => {
     });
     expect(
       withFooter.components.some(
-        (c) => c.type === 'FOOTER' && c.text === 'Reply STOP to opt out',
-      ),
+        (c) => c.type === 'FOOTER' && c.text === 'Reply STOP to opt out'
+      )
     ).toBe(true);
 
-    const withoutFooter = buildMetaTemplatePayload({ ...base, footer_text: '' });
-    expect(withoutFooter.components.some((c) => c.type === 'FOOTER')).toBe(false);
+    const withoutFooter = buildMetaTemplatePayload({
+      ...base,
+      footer_text: '',
+    });
+    expect(withoutFooter.components.some((c) => c.type === 'FOOTER')).toBe(
+      false
+    );
   });
 
   it('emits the buttons component with correct per-type fields', () => {
@@ -121,6 +124,60 @@ describe('buildMetaTemplatePayload', () => {
       'BODY',
       'FOOTER',
       'BUTTONS',
+    ]);
+  });
+
+  it('builds Meta CAROUSEL cards with nested media, body, and buttons', () => {
+    const payload = buildMetaTemplatePayload({
+      ...base,
+      name: 'summer_carousel',
+      category: 'Marketing',
+      template_type: 'carousel',
+      body_text: 'Choose the offer that suits you.',
+      carousel_cards: [
+        {
+          header_type: 'image',
+          header_handle: '4::card-one',
+          body_text: 'Save {{1}} on facials today.',
+          sample_values: { body: ['20%'] },
+          buttons: [
+            { type: 'URL', text: 'Book', url: 'https://example.com/one' },
+          ],
+        },
+        {
+          header_type: 'image',
+          header_handle: '4::card-two',
+          body_text: 'Save {{1}} on skincare today.',
+          sample_values: { body: ['15%'] },
+          buttons: [
+            { type: 'URL', text: 'Book', url: 'https://example.com/two' },
+          ],
+        },
+      ],
+    });
+
+    expect(payload.category).toBe('MARKETING');
+    expect(payload.components.map((component) => component.type)).toEqual([
+      'BODY',
+      'CAROUSEL',
+    ]);
+    expect(payload.components[1].cards?.[0].components).toEqual([
+      {
+        type: 'HEADER',
+        format: 'IMAGE',
+        example: { header_handle: ['4::card-one'] },
+      },
+      {
+        type: 'BODY',
+        text: 'Save {{1}} on facials today.',
+        example: { body_text: [['20%']] },
+      },
+      {
+        type: 'BUTTONS',
+        buttons: [
+          { type: 'URL', text: 'Book', url: 'https://example.com/one' },
+        ],
+      },
     ]);
   });
 });

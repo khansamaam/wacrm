@@ -49,6 +49,13 @@ export interface SendTimeParams {
    * override at send time.
    */
   buttonParams?: Record<number, string>;
+  /** Per-card values for carousel templates, in card order. */
+  carouselCards?: Array<{
+    body?: string[];
+    headerMediaUrl?: string;
+    headerMediaId?: string;
+    buttonParams?: Record<number, string>;
+  }>;
 }
 
 export type MetaSendComponent =
@@ -59,6 +66,13 @@ export type MetaSendComponent =
       sub_type: 'url' | 'quick_reply' | 'copy_code';
       index: string;
       parameters: MetaSendParameter[];
+    }
+  | {
+      type: 'carousel';
+      cards: Array<{
+        card_index: number;
+        components: Exclude<MetaSendComponent, { type: 'carousel' }>[];
+      }>;
     };
 
 type MetaSendParameter =
@@ -71,7 +85,7 @@ type MetaSendParameter =
 
 function buildHeaderComponent(
   template: MessageTemplate,
-  params: SendTimeParams,
+  params: SendTimeParams
 ): MetaSendComponent | null {
   const headerType = template.header_type;
   if (!headerType) return null;
@@ -80,12 +94,14 @@ function buildHeaderComponent(
     // TEXT header with {{1}} → need a value. Static text headers
     // (no variables) just ride along inside the template itself; no
     // header component required on send.
-    const varCount = extractVariableIndices(template.header_content ?? '').length;
+    const varCount = extractVariableIndices(
+      template.header_content ?? ''
+    ).length;
     if (varCount === 0) return null;
     const value = params.headerText;
     if (!value || !value.trim()) {
       throw new Error(
-        'Header text variable {{1}} requires a value — pass headerText.',
+        'Header text variable {{1}} requires a value — pass headerText.'
       );
     }
     return {
@@ -103,11 +119,13 @@ function buildHeaderComponent(
   // sample (`example.header_handle`); it is NOT a reusable send-time
   // media id, and passing it as `{ id }` makes Meta reject the send. Only
   // an explicit `headerMediaId` (a real /media upload id) is honored.
-  const link = params.headerMediaUrl ?? template.header_media_url;
-  const id = params.headerMediaId;
+  // Treat blank overrides as absent. API clients and form state can submit an
+  // empty string; it must not mask a valid media URL stored on the template.
+  const link = params.headerMediaUrl?.trim() || template.header_media_url?.trim();
+  const id = params.headerMediaId?.trim();
   if (!link && !id) {
     throw new Error(
-      `${headerType} header requires a media link or id at send time — set header_media_url on the template or pass headerMediaUrl/headerMediaId.`,
+      `${headerType} header requires a media link or id at send time — set header_media_url on the template or pass headerMediaUrl/headerMediaId.`
     );
   }
   const mediaPayload: { link?: string; id?: string } = id ? { id } : { link };
@@ -125,14 +143,14 @@ function buildHeaderComponent(
 
 function buildBodyComponent(
   template: MessageTemplate,
-  params: SendTimeParams,
+  params: SendTimeParams
 ): MetaSendComponent | null {
   const varCount = extractVariableIndices(template.body_text).length;
   const body = params.body ?? [];
   if (varCount === 0 && body.length === 0) return null;
   if (body.length < varCount) {
     throw new Error(
-      `Body has ${varCount} variable(s) but only ${body.length} value(s) were supplied.`,
+      `Body has ${varCount} variable(s) but only ${body.length} value(s) were supplied.`
     );
   }
   // Trim to the variable count — extra values are dropped silently so
@@ -146,7 +164,7 @@ function buildBodyComponent(
 
 function buttonNeedsSendParam(
   button: TemplateButton,
-  override: string | undefined,
+  override: string | undefined
 ): boolean {
   switch (button.type) {
     case 'URL':
@@ -165,7 +183,7 @@ function buttonNeedsSendParam(
 function buildButtonComponent(
   button: TemplateButton,
   index: number,
-  override: string | undefined,
+  override: string | undefined
 ): MetaSendComponent | null {
   if (!buttonNeedsSendParam(button, override)) return null;
 
@@ -175,7 +193,7 @@ function buildButtonComponent(
       // the button's index in the template's buttons array.
       if (!override || !override.trim()) {
         throw new Error(
-          `URL button #${index + 1} uses {{1}} — requires a buttonParams[${index}] value.`,
+          `URL button #${index + 1} uses {{1}} — requires a buttonParams[${index}] value.`
         );
       }
       return {
@@ -218,8 +236,42 @@ function buildButtonComponent(
  */
 export function buildSendComponents(
   template: MessageTemplate,
-  params: SendTimeParams = {},
+  params: SendTimeParams = {}
 ): MetaSendComponent[] {
+  if ((template.template_type ?? 'standard') === 'carousel') {
+    const cards = template.carousel_cards ?? [];
+    if (cards.length === 0) {
+      throw new Error(
+        'Carousel template has no locally stored cards. Sync templates from Meta and retry.'
+      );
+    }
+    const cardValues = params.carouselCards ?? [];
+    return [
+      {
+        type: 'carousel',
+        cards: cards.map((card, cardIndex) => {
+          const values = cardValues[cardIndex] ?? {};
+          const cardTemplate: MessageTemplate = {
+            ...template,
+            template_type: 'standard',
+            header_type: card.header_type,
+            header_media_url: card.header_media_url,
+            header_handle: card.header_handle,
+            body_text: card.body_text,
+            buttons: card.buttons,
+          };
+          return {
+            card_index: cardIndex,
+            components: buildSendComponents(cardTemplate, values) as Exclude<
+              MetaSendComponent,
+              { type: 'carousel' }
+            >[],
+          };
+        }),
+      },
+    ];
+  }
+
   const out: MetaSendComponent[] = [];
   const header = buildHeaderComponent(template, params);
   if (header) out.push(header);

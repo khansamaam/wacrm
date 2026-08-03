@@ -1,5 +1,5 @@
-import { uploadResumableMedia } from '@/lib/whatsapp/meta-api'
-import type { TemplatePayload } from '@/lib/whatsapp/template-validators'
+import { uploadResumableMedia } from '@/lib/whatsapp/meta-api';
+import type { TemplatePayload } from '@/lib/whatsapp/template-validators';
 
 /**
  * Meta requires an `example.header_handle` (from the Resumable Upload
@@ -15,54 +15,63 @@ import type { TemplatePayload } from '@/lib/whatsapp/template-validators'
  */
 
 // Meta's image-header sample limits.
-const IMAGE_MAX_BYTES = 5 * 1024 * 1024
-const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png']
+const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png'];
 
 export async function ensureImageHeaderHandle(
   payload: TemplatePayload,
   accessToken: string,
-  metaAppId?: string | null,
+  metaAppId?: string | null
 ): Promise<void> {
-  if (payload.header_type !== 'image') return
-  if (payload.header_handle) return // already have one
-  if (!payload.header_media_url) return // validator already requires url-or-handle
+  if (payload.header_type !== 'image') return;
+  if (payload.header_handle) return; // already have one
+  if (!payload.header_media_url) return; // validator already requires url-or-handle
 
-  const appId = metaAppId?.trim() || process.env.META_APP_ID
+  const appId = metaAppId?.trim() || process.env.META_APP_ID;
   if (!appId) {
     throw new Error(
-      'Image-header templates need a Meta App ID for this WhatsApp number (used for Meta’s Resumable Upload). Add it in the number’s Meta settings, or remove the image header.',
-    )
+      'Image-header templates need a Meta App ID for this WhatsApp number (used for Meta’s Resumable Upload). Add it in the number’s Meta settings, or remove the image header.'
+    );
   }
 
   // Fetch the sample image bytes (works for our uploaded chat-media URL
   // and for a manually-pasted public link).
-  let res: Response
+  let res: Response;
   try {
-    res = await fetch(payload.header_media_url)
+    res = await fetch(payload.header_media_url);
   } catch {
-    throw new Error('Could not fetch the header image URL. Make sure it is publicly reachable.')
+    throw new Error(
+      'Could not fetch the header image URL. Make sure it is publicly reachable.'
+    );
   }
   if (!res.ok) {
-    throw new Error(`Header image URL returned ${res.status}. It must be publicly reachable.`)
+    throw new Error(
+      `Header image URL returned ${res.status}. It must be publicly reachable.`
+    );
   }
 
-  const contentType = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase()
+  const contentType = (res.headers.get('content-type') || '')
+    .split(';')[0]
+    .trim()
+    .toLowerCase();
   if (contentType && !ALLOWED_IMAGE_TYPES.includes(contentType)) {
-    throw new Error(`Header image must be JPEG or PNG (got ${contentType}).`)
+    throw new Error(`Header image must be JPEG or PNG (got ${contentType}).`);
   }
 
-  const bytes = new Uint8Array(await res.arrayBuffer())
+  const bytes = new Uint8Array(await res.arrayBuffer());
   if (bytes.byteLength === 0) {
-    throw new Error('Header image is empty.')
+    throw new Error('Header image is empty.');
   }
   if (bytes.byteLength > IMAGE_MAX_BYTES) {
     throw new Error(
-      `Header image is ${(bytes.byteLength / 1024 / 1024).toFixed(1)} MB — Meta's limit is 5 MB.`,
-    )
+      `Header image is ${(bytes.byteLength / 1024 / 1024).toFixed(1)} MB — Meta's limit is 5 MB.`
+    );
   }
 
-  const mimeType = ALLOWED_IMAGE_TYPES.includes(contentType) ? contentType : 'image/jpeg'
-  const fileName = mimeType === 'image/png' ? 'header.png' : 'header.jpg'
+  const mimeType = ALLOWED_IMAGE_TYPES.includes(contentType)
+    ? contentType
+    : 'image/jpeg';
+  const fileName = mimeType === 'image/png' ? 'header.png' : 'header.jpg';
 
   const { handle } = await uploadResumableMedia({
     appId,
@@ -70,6 +79,30 @@ export async function ensureImageHeaderHandle(
     fileName,
     mimeType,
     bytes,
-  })
-  payload.header_handle = handle
+  });
+  payload.header_handle = handle;
+}
+
+/** Upload every image-card sample and attach its Meta creation handle. */
+export async function ensureCarouselHeaderHandles(
+  payload: TemplatePayload,
+  accessToken: string,
+  metaAppId?: string | null
+): Promise<void> {
+  if ((payload.template_type ?? 'standard') !== 'carousel') return;
+
+  for (const card of payload.carousel_cards ?? []) {
+    if (card.header_type !== 'image') continue;
+    const cardPayload: TemplatePayload = {
+      name: payload.name,
+      category: 'Marketing',
+      language: payload.language,
+      body_text: card.body_text,
+      header_type: 'image',
+      header_media_url: card.header_media_url,
+      header_handle: card.header_handle,
+    };
+    await ensureImageHeaderHandle(cardPayload, accessToken, metaAppId);
+    card.header_handle = cardPayload.header_handle;
+  }
 }

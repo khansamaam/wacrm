@@ -11,13 +11,14 @@
  */
 
 import type { TemplatePayload } from './template-validators';
-import type { TemplateButton } from '@/types';
+import type { TemplateButton, TemplateCarouselCard } from '@/types';
 
 export interface MetaComponent {
-  type: 'HEADER' | 'BODY' | 'FOOTER' | 'BUTTONS';
+  type: 'HEADER' | 'BODY' | 'FOOTER' | 'BUTTONS' | 'CAROUSEL';
   format?: 'TEXT' | 'IMAGE' | 'VIDEO' | 'DOCUMENT';
   text?: string;
   buttons?: MetaButtonPayload[];
+  cards?: { components: MetaComponent[] }[];
   example?: {
     header_text?: string[];
     header_url?: string[];
@@ -35,7 +36,8 @@ interface MetaButtonPayload {
 }
 
 function buildHeaderComponent(payload: TemplatePayload): MetaComponent | null {
-  const { header_type, header_content, header_media_url, header_handle } = payload;
+  const { header_type, header_content, header_media_url, header_handle } =
+    payload;
   if (!header_type) return null;
 
   if (header_type === 'text') {
@@ -100,7 +102,11 @@ function buildButtonPayload(b: TemplateButton): MetaButtonPayload {
       return payload;
     }
     case 'PHONE_NUMBER':
-      return { type: 'PHONE_NUMBER', text: b.text, phone_number: b.phone_number };
+      return {
+        type: 'PHONE_NUMBER',
+        text: b.text,
+        phone_number: b.phone_number,
+      };
     case 'COPY_CODE':
       return { type: 'COPY_CODE', text: b.text, example: [b.example] };
   }
@@ -112,6 +118,34 @@ function buildButtonsComponent(payload: TemplatePayload): MetaComponent | null {
     type: 'BUTTONS',
     buttons: payload.buttons.map(buildButtonPayload),
   };
+}
+
+function buildCarouselCard(card: TemplateCarouselCard): {
+  components: MetaComponent[];
+} {
+  const header: MetaComponent = {
+    type: 'HEADER',
+    format: card.header_type === 'video' ? 'VIDEO' : 'IMAGE',
+    example: card.header_handle
+      ? { header_handle: [card.header_handle] }
+      : { header_url: [card.header_media_url!] },
+  };
+  const body: MetaComponent = { type: 'BODY', text: card.body_text };
+  const samples = card.sample_values?.body;
+  if (samples?.length) body.example = { body_text: [samples] };
+
+  const components = [header, body];
+  if (card.buttons?.length) {
+    const buttons = buildButtonsComponent({
+      name: '',
+      category: 'Marketing',
+      language: '',
+      body_text: '',
+      buttons: card.buttons,
+    });
+    if (buttons) components.push(buttons);
+  }
+  return { components };
 }
 
 export interface MetaTemplateSubmitPayload {
@@ -135,9 +169,23 @@ const CATEGORY_TO_META: Record<
  * components in canonical order: HEADER → BODY → FOOTER → BUTTONS).
  */
 export function buildMetaTemplatePayload(
-  payload: TemplatePayload,
+  payload: TemplatePayload
 ): MetaTemplateSubmitPayload {
   const components: MetaComponent[] = [];
+  if ((payload.template_type ?? 'standard') === 'carousel') {
+    components.push(buildBodyComponent(payload));
+    components.push({
+      type: 'CAROUSEL',
+      cards: (payload.carousel_cards ?? []).map(buildCarouselCard),
+    });
+    return {
+      name: payload.name,
+      category: 'MARKETING',
+      language: payload.language,
+      components,
+    };
+  }
+
   const header = buildHeaderComponent(payload);
   if (header) components.push(header);
   components.push(buildBodyComponent(payload));
