@@ -16,11 +16,13 @@ import {
   RATE_LIMITS,
 } from '@/lib/rate-limit'
 import { resolveWhatsAppNumber, WhatsAppNumberError } from '@/lib/whatsapp/numbers'
+import { persistBroadcastInboxMessage } from '@/lib/whatsapp/broadcast-inbox'
 
 interface BroadcastResult {
   phone: string
   status: 'sent' | 'failed'
   whatsapp_message_id?: string
+  inbox_sync_error?: string
   error?: string
 }
 
@@ -48,6 +50,8 @@ interface BroadcastResult {
  */
 interface NewRecipient {
   phone: string
+  /** Existing workspace contact, supplied by the dashboard sender. */
+  contact_id?: string
   /** Body variable values, one per {{N}}. Legacy field. */
   params?: string[]
   /**
@@ -232,10 +236,38 @@ export async function POST(request: Request) {
       }
 
       if (sentMessageId) {
+        let inboxSyncError: string | undefined
+        try {
+          await persistBroadcastInboxMessage(supabase, {
+            accountId,
+            auditUserId: user.id,
+            contactId:
+              typeof recipient.contact_id === 'string'
+                ? recipient.contact_id
+                : null,
+            recipientPhone: sanitized,
+            whatsappNumberId: config.id,
+            metaMessageId: sentMessageId,
+            templateName: template_name,
+            template: templateRow,
+            params: recipient.params ?? [],
+            messageParams: recipient.messageParams,
+          })
+        } catch (error) {
+          inboxSyncError =
+            error instanceof Error ? error.message : 'Inbox persistence failed'
+          // The customer already received this message. Keep the delivery
+          // marked sent and surface the local persistence problem separately.
+          console.error(
+            `[broadcast] Meta sent ${sentMessageId}, but Inbox persistence failed:`,
+            inboxSyncError,
+          )
+        }
         results.push({
           phone: recipient.phone,
           status: 'sent',
           whatsapp_message_id: sentMessageId,
+          inbox_sync_error: inboxSyncError,
         })
         sentCount++
       } else {

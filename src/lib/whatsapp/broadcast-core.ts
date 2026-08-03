@@ -34,6 +34,7 @@ import {
   WhatsAppNumberError,
 } from '@/lib/whatsapp/numbers';
 import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder';
+import { persistBroadcastInboxMessage } from '@/lib/whatsapp/broadcast-inbox';
 
 /** Thrown by createBroadcast on a caller-visible failure; route maps it. */
 export class BroadcastError extends Error {
@@ -66,6 +67,7 @@ export interface CreateBroadcastParams {
 
 interface PlannedRecipient {
   recipientRowId: string;
+  contactId: string;
   phone: string;
   params: string[];
   messageParams?: SendTimeParams;
@@ -73,9 +75,12 @@ interface PlannedRecipient {
 
 export interface BroadcastPlan {
   broadcastId: string;
+  accountId: string;
+  auditUserId: string;
   templateName: string;
   templateLanguage: string;
   phoneNumberId: string;
+  whatsappNumberId: string;
   accessToken: string;
   templateRow: MessageTemplate | null;
   planned: PlannedRecipient[];
@@ -264,6 +269,7 @@ export async function createBroadcast(
     const r = byContact.get(row.contact_id as string)!;
     return {
       recipientRowId: row.id as string,
+      contactId: r.contactId,
       phone: r.phone,
       params: r.params,
       messageParams: r.messageParams,
@@ -272,9 +278,12 @@ export async function createBroadcast(
 
   return {
     broadcastId: broadcast.id,
+    accountId,
+    auditUserId,
     templateName,
     templateLanguage,
     phoneNumberId: config.phone_number_id,
+    whatsappNumberId: config.id,
     accessToken,
     templateRow,
     planned,
@@ -332,13 +341,35 @@ export async function deliverBroadcast(
 
     if (sentMessageId) {
       sentCount++;
+      let inboxSyncError: string | null = null;
+      try {
+        await persistBroadcastInboxMessage(db, {
+          accountId: plan.accountId,
+          auditUserId: plan.auditUserId,
+          contactId: recipient.contactId,
+          recipientPhone: recipient.phone,
+          whatsappNumberId: plan.whatsappNumberId,
+          metaMessageId: sentMessageId,
+          templateName: plan.templateName,
+          template: plan.templateRow,
+          params: recipient.params,
+          messageParams: recipient.messageParams,
+        });
+      } catch (error) {
+        inboxSyncError =
+          error instanceof Error ? error.message : 'Inbox persistence failed';
+        console.error(
+          `[broadcast-core] Meta sent ${sentMessageId}, but Inbox persistence failed:`,
+          inboxSyncError,
+        );
+      }
       await db
         .from('broadcast_recipients')
         .update({
           status: 'sent',
           sent_at: new Date().toISOString(),
           whatsapp_message_id: sentMessageId,
-          error_message: null,
+          error_message: inboxSyncError,
         })
         .eq('id', recipient.recipientRowId);
     } else {

@@ -258,3 +258,24 @@ async function findOrCreateConversationRow(
 
   return newConv.id;
 }
+
+/**
+ * Resolve a conversation when the caller already owns a validated contact id.
+ * Broadcasts use this after Meta accepts a message, avoiding a second fuzzy
+ * phone lookup while retaining the same per-number conversation semantics.
+ */
+export async function resolveConversationForContact(
+  db: SupabaseClient,
+  accountId: string,
+  contactId: string,
+  auditUserId: string,
+  whatsappNumberId: string | null,
+): Promise<string> {
+  return findOrCreateConversationRow(
+    db,
+    accountId,
+    contactId,
+    auditUserId,
+    whatsappNumberId,
+  );
+}

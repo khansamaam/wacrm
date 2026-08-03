@@ -77,6 +77,7 @@ interface BroadcastApiResult {
   phone: string;
   status: 'sent' | 'failed';
   whatsapp_message_id?: string;
+  inbox_sync_error?: string;
   error?: string;
 }
 
@@ -478,6 +479,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
               : [];
             return {
               phone: r.contact!.phone as string,
+              contact_id: r.contact!.id,
               params: resolvedParams,
               messageParams: buildBroadcastTemplateParams(payload.template, {
                 body: resolvedParams,
@@ -536,7 +538,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
                   status: 'sent',
                   sent_at: new Date().toISOString(),
                   whatsapp_message_id: result.whatsapp_message_id ?? null,
-                  error_message: null,
+                  error_message: result.inbox_sync_error ?? null,
                 })
                 .eq('id', recipient.id);
             } else {
