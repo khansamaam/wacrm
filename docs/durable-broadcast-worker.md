@@ -8,10 +8,36 @@ audience.
 ## Deployment
 
 1. Apply `supabase/migrations/052_durable_broadcast_queue.sql`.
-2. Optionally set a long random `BROADCAST_WORKER_SECRET` on the application
-   server. If it is omitted, the route uses `AUTOMATION_CRON_SECRET`. When both
-   are omitted, the worker accepts an unauthenticated cron request.
-3. Configure a scheduler to call the worker once per minute:
+2. Run the app as a normal long-lived Node.js server (`next start`, PM2,
+   cPanel Node.js app, or your current Cloudflare Tunnel origin process).
+   In production, the embedded worker starts automatically with the Next.js
+   server and drains the queue every minute.
+
+No external cron service is required for the usual hosted-server setup. The
+embedded worker is intentionally disabled in local development unless you set:
+
+```sh
+BROADCAST_WORKER_EMBEDDED=true
+```
+
+Optional tuning values:
+
+```sh
+BROADCAST_WORKER_INTERVAL_MS=60000
+BROADCAST_WORKER_MAX_JOBS=100
+BROADCAST_WORKER_BATCH_SIZE=10
+BROADCAST_WORKER_TIME_BUDGET_MS=45000
+```
+
+Set `BROADCAST_WORKER_EMBEDDED=false` only when you intentionally run a
+separate worker or scheduler elsewhere.
+
+### Manual worker endpoint
+
+`GET /api/whatsapp/broadcast/worker` remains available as a manual diagnostic
+or external-cron fallback. Optionally set a long random
+`BROADCAST_WORKER_SECRET` on the application server to protect manual GET
+calls. `AUTOMATION_CRON_SECRET` does not affect this endpoint.
 
 ```sh
 curl --fail --silent --show-error \
@@ -19,7 +45,7 @@ curl --fail --silent --show-error \
   https://YOUR_APP_HOST/api/whatsapp/broadcast/worker
 ```
 
-Without either secret, omit the header:
+Without `BROADCAST_WORKER_SECRET`, omit the header:
 
 ```sh
 curl --fail --silent --show-error \
@@ -35,8 +61,12 @@ public caller could repeatedly invoke the existing queue and consume server
 resources. A secret remains recommended for internet-facing deployments.
 
 The dashboard also sends an authenticated best-effort worker kick immediately
-after enqueueing. That reduces startup latency, but cron is the recovery path
-and must remain configured.
+after enqueueing. That reduces startup latency, but the embedded server worker
+is the recovery path and continues delivery when the browser is closed.
+
+> Serverless note: the embedded worker requires a long-lived Node.js server.
+> If the app is deployed to a serverless platform where processes stop between
+> requests, keep using a platform scheduler or a separate worker process.
 
 ## Delivery behavior
 

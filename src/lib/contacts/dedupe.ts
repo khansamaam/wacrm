@@ -28,9 +28,10 @@ export interface ExistingContact {
 
 /**
  * Find an existing contact in `accountId` whose phone matches `phone`,
- * or null. Pre-filters in SQL by the last-8-digit suffix (so we don't
- * pull every contact), then applies the strict `phonesMatch` in JS on
- * the small candidate set — the exact approach the webhook has used.
+ * or null. Pre-filter against the generated digits-only `phone_normalized`
+ * column, then apply `phonesMatch` in JS for trunk-prefix tolerance. Querying
+ * the normalized column is important: formatted stored values such as
+ * "+971 50 151 0564" cannot match a raw digit suffix against `phone`.
  */
 export async function findExistingContact(
   db: SupabaseClient,
@@ -46,7 +47,7 @@ export async function findExistingContact(
     .from("contacts")
     .select("*")
     .eq("account_id", accountId)
-    .like("phone", `%${suffix}`);
+    .like("phone_normalized", `%${suffix}`);
 
   if (error || !data) return null;
 

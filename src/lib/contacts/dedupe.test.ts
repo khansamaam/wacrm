@@ -84,6 +84,12 @@ describe("findExistingContact", () => {
     expect(hit?.id).toBe("c1");
   });
 
+  it("returns a contact whose stored phone contains formatting", async () => {
+    const db = stubDb([{ id: "c1", phone: "+971 50 151 0564" }]);
+    const hit = await findExistingContact(db, "acct", "+971501510564");
+    expect(hit?.id).toBe("c1");
+  });
+
   it("returns null when no candidate matches", async () => {
     const db = stubDb([{ id: "c1", phone: "15559999999" }]);
     const hit = await findExistingContact(db, "acct", "+1 555-123-4567");

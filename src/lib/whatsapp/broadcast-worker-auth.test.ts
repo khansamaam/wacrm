@@ -10,35 +10,23 @@ function request(secret?: string): Request {
 
 describe('broadcast worker authentication', () => {
   it('allows a worker kick when no secret is configured', () => {
-    expect(isBroadcastWorkerRequestAuthorized(request(), '', '')).toBe(true);
+    expect(isBroadcastWorkerRequestAuthorized(request(), '')).toBe(true);
   });
 
   it('requires an exact header match when a worker secret is configured', () => {
-    expect(
-      isBroadcastWorkerRequestAuthorized(request(), 'worker-secret', '')
-    ).toBe(false);
+    expect(isBroadcastWorkerRequestAuthorized(request(), 'worker-secret')).toBe(
+      false
+    );
     expect(
       isBroadcastWorkerRequestAuthorized(
         request('wrong-secret'),
-        'worker-secret',
-        ''
+        'worker-secret'
       )
     ).toBe(false);
     expect(
       isBroadcastWorkerRequestAuthorized(
         request('worker-secret'),
-        'worker-secret',
-        ''
-      )
-    ).toBe(true);
-  });
-
-  it('falls back to the automation secret when the worker secret is absent', () => {
-    expect(
-      isBroadcastWorkerRequestAuthorized(
-        request('automation-secret'),
-        '',
-        'automation-secret'
+        'worker-secret'
       )
     ).toBe(true);
   });

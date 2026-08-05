@@ -10,14 +10,12 @@ import { timingSafeEqual } from 'node:crypto';
  */
 export function isBroadcastWorkerRequestAuthorized(
   request: Request,
-  workerSecret = process.env.BROADCAST_WORKER_SECRET,
-  automationSecret = process.env.AUTOMATION_CRON_SECRET
+  workerSecret = process.env.BROADCAST_WORKER_SECRET
 ): boolean {
-  const expected = workerSecret || automationSecret;
-  if (!expected) return true;
+  if (!workerSecret) return true;
 
   const supplied = request.headers.get('x-cron-secret') ?? '';
-  const expectedBuffer = Buffer.from(expected);
+  const expectedBuffer = Buffer.from(workerSecret);
   const suppliedBuffer = Buffer.from(supplied);
   return (
     expectedBuffer.length === suppliedBuffer.length &&
