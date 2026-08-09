@@ -27,6 +27,7 @@ interface ConversationListProps {
   onSelect: (conversation: Conversation) => void;
   conversations: Conversation[];
   onConversationsLoaded: (conversations: Conversation[]) => void;
+  accountId?: string | null;
   /**
    * Increment to force the fetch effect below to refire. The parent
    * bumps this on realtime reconnect / tab visibility → visible so the
@@ -43,7 +44,7 @@ const STATUS_COLORS: Record<ConversationStatus, string> = {
   closed: "bg-muted-foreground",
 };
 
-
+const INBOX_CONVERSATION_FETCH_LIMIT = 150;
 
 type InboxFilter = ConversationStatus | "all" | "unread";
 
@@ -52,6 +53,7 @@ export function ConversationList({
   onSelect,
   conversations,
   onConversationsLoaded,
+  accountId = null,
   resyncToken = 0,
   whatsappNumberId = null,
 }: ConversationListProps) {
@@ -97,12 +99,30 @@ export function ConversationList({
     let cancelled = false;
 
     (async () => {
+      setLoading(true);
+
+      if (!accountId) {
+        onConversationsLoadedRef.current([]);
+        setLoading(false);
+        return;
+      }
+
+      // Keep the initial inbox load bounded. The previous query fetched every
+      // conversation plus embedded contact/tag rows, which can hit Supabase's
+      // statement timeout once a workspace has a large message history.
       let query = supabase
         .from("conversations")
         .select(CONVERSATION_SELECT)
-        .order("last_message_at", { ascending: false });
-      if (whatsappNumberId) query = query.eq('whatsapp_number_id', whatsappNumberId)
-      const { data, error } = await query
+        .eq("account_id", accountId)
+        .order("last_message_at", { ascending: false, nullsFirst: false })
+        .order("updated_at", { ascending: false, nullsFirst: false })
+        .limit(INBOX_CONVERSATION_FETCH_LIMIT);
+
+      if (whatsappNumberId) {
+        query = query.eq("whatsapp_number_id", whatsappNumberId);
+      }
+
+      const { data, error } = await query;
 
       if (cancelled) return;
 
@@ -128,7 +148,7 @@ export function ConversationList({
     // `resyncToken` is included so the parent can force a refetch when
     // the realtime channel reconnects or the tab regains focus — catches
     // up on any events sent while the WS was disconnected or throttled.
-  }, [resyncToken, whatsappNumberId]);
+  }, [accountId, resyncToken, whatsappNumberId]);
 
   // Tag definitions for the filter picker — loaded once so labels/colours
   // stay stable regardless of which conversations happen to be loaded.
