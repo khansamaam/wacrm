@@ -32,6 +32,7 @@ import {
   rateLimitResponse,
   RATE_LIMITS,
 } from "@/lib/rate-limit";
+import { supabaseAdmin } from "@/lib/flows/admin-client";
 
 // Resolve the base URL we publish invite links under.
 //
@@ -167,6 +168,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const ctx = await requireRole("admin");
+    const admin = supabaseAdmin();
 
     // 30/min per user. The Members tab is a clicks-only UI so any
     // legitimate admin is far below this; the cap exists to keep
@@ -209,7 +211,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Select at least one WhatsApp number' }, { status: 400 });
     }
     if (numberIds.length > 0) {
-      const { count, error: numberError } = await ctx.supabase
+      const { count, error: numberError } = await admin
         .from('whatsapp_numbers')
         .select('id', { count: 'exact', head: true })
         .eq('account_id', ctx.accountId)
@@ -233,7 +235,7 @@ export async function POST(request: Request) {
 
     const { token, hash } = generateInviteToken();
 
-    const { data, error } = await ctx.supabase
+    const { data, error } = await admin
       .from("account_invitations")
       .insert({
         account_id: ctx.accountId,
@@ -256,14 +258,14 @@ export async function POST(request: Request) {
     }
 
     if (accessMode === 'selected') {
-      const { error: assignmentError } = await ctx.supabase
+      const { error: assignmentError } = await admin
         .from('whatsapp_invitation_number_access')
         .insert([...new Set(numberIds)].map((whatsappNumberId) => ({
           invitation_id: data.id,
           whatsapp_number_id: whatsappNumberId,
         })));
       if (assignmentError) {
-        await ctx.supabase.from('account_invitations').delete().eq('id', data.id);
+        await admin.from('account_invitations').delete().eq('id', data.id);
         console.error('[POST /api/account/invitations] number assignment failed:', assignmentError);
         return NextResponse.json({ error: 'Failed to assign WhatsApp numbers to invitation' }, { status: 500 });
       }

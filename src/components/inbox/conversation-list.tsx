@@ -27,6 +27,7 @@ interface ConversationListProps {
   onSelect: (conversation: Conversation) => void;
   conversations: Conversation[];
   onConversationsLoaded: (conversations: Conversation[]) => void;
+  accountId?: string | null;
   /**
    * Increment to force the fetch effect below to refire. The parent
    * bumps this on realtime reconnect / tab visibility → visible so the
@@ -43,15 +44,64 @@ const STATUS_COLORS: Record<ConversationStatus, string> = {
   closed: "bg-muted-foreground",
 };
 
-
+const INBOX_CONVERSATION_FETCH_LIMIT = 150;
+const CONVERSATION_LIGHT_SELECT =
+  "id,user_id,contact_id,whatsapp_number_id,status,assigned_agent_id,last_message_text,last_message_at,unread_count,created_at,updated_at";
+const CONTACT_WITH_TAGS_SELECT = "*, contact_tags(tags(*))";
 
 type InboxFilter = ConversationStatus | "all" | "unread";
+
+interface SupabaseLikeError {
+  message?: string;
+  details?: string | null;
+  hint?: string | null;
+  code?: string;
+}
+
+type ContactWithJoinTags = NonNullable<Conversation["contact"]> & {
+  contact_tags?: { tags: Tag | null }[];
+};
+
+function logInboxFetchWarning(stage: string, error: SupabaseLikeError) {
+  // Next's development overlay treats console.error as a blocking app error.
+  // This is a recoverable data-load failure, so warn with explicit fields.
+  console.warn("[Inbox] Failed to fetch conversations:", {
+    stage,
+    message: error.message,
+    details: error.details,
+    hint: error.hint,
+    code: error.code,
+  });
+}
+
+function attachContactsToConversations(
+  rows: Conversation[],
+  contacts: ContactWithJoinTags[],
+): Conversation[] {
+  const contactsById = new Map<string, Conversation["contact"]>();
+
+  for (const rawContact of contacts) {
+    const { contact_tags, ...contact } = rawContact;
+    contactsById.set(contact.id, {
+      ...contact,
+      tags: (contact_tags ?? [])
+        .map((ct) => ct.tags)
+        .filter((tag): tag is Tag => tag != null),
+    });
+  }
+
+  return rows.map((row) => ({
+    ...row,
+    contact: contactsById.get(row.contact_id) ?? row.contact,
+  }));
+}
 
 export function ConversationList({
   activeConversationId,
   onSelect,
   conversations,
   onConversationsLoaded,
+  accountId = null,
   resyncToken = 0,
   whatsappNumberId = null,
 }: ConversationListProps) {
@@ -97,23 +147,87 @@ export function ConversationList({
     let cancelled = false;
 
     (async () => {
+      setLoading(true);
+
+      if (!accountId) {
+        onConversationsLoadedRef.current([]);
+        setLoading(false);
+        return;
+      }
+
+      // Keep the initial inbox load bounded. The previous query fetched every
+      // conversation plus embedded contact/tag rows, which can hit Supabase's
+      // statement timeout once a workspace has a large message history.
       let query = supabase
         .from("conversations")
         .select(CONVERSATION_SELECT)
-        .order("last_message_at", { ascending: false });
-      if (whatsappNumberId) query = query.eq('whatsapp_number_id', whatsappNumberId)
-      const { data, error } = await query
+        .eq("account_id", accountId)
+        .order("last_message_at", { ascending: false, nullsFirst: false })
+        .order("updated_at", { ascending: false, nullsFirst: false })
+        .limit(INBOX_CONVERSATION_FETCH_LIMIT);
+
+      if (whatsappNumberId) {
+        query = query.eq("whatsapp_number_id", whatsappNumberId);
+      }
+
+      const { data, error } = await query;
 
       if (cancelled) return;
 
       if (error) {
-        // Supabase errors have non-enumerable properties — log fields explicitly
-        console.error("Failed to fetch conversations:", {
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-          code: error.code,
-        });
+        logInboxFetchWarning("embedded_contact_query", error);
+
+        let fallbackQuery = supabase
+          .from("conversations")
+          .select(CONVERSATION_LIGHT_SELECT)
+          .eq("account_id", accountId)
+          .order("last_message_at", { ascending: false, nullsFirst: false })
+          .order("updated_at", { ascending: false, nullsFirst: false })
+          .limit(INBOX_CONVERSATION_FETCH_LIMIT);
+
+        if (whatsappNumberId) {
+          fallbackQuery = fallbackQuery.eq("whatsapp_number_id", whatsappNumberId);
+        }
+
+        const { data: fallbackRows, error: fallbackError } = await fallbackQuery;
+        if (cancelled) return;
+
+        if (fallbackError) {
+          logInboxFetchWarning("lightweight_conversation_query", fallbackError);
+          setLoading(false);
+          return;
+        }
+
+        const baseConversations = (fallbackRows ?? []) as Conversation[];
+        const contactIds = Array.from(
+          new Set(baseConversations.map((row) => row.contact_id).filter(Boolean)),
+        );
+
+        if (contactIds.length === 0) {
+          onConversationsLoadedRef.current(baseConversations);
+          setLoading(false);
+          return;
+        }
+
+        const { data: contacts, error: contactsError } = await supabase
+          .from("contacts")
+          .select(CONTACT_WITH_TAGS_SELECT)
+          .in("id", contactIds);
+
+        if (cancelled) return;
+
+        if (contactsError) {
+          logInboxFetchWarning("contact_hydration_query", contactsError);
+          onConversationsLoadedRef.current(baseConversations);
+        } else {
+          onConversationsLoadedRef.current(
+            attachContactsToConversations(
+              baseConversations,
+              (contacts ?? []) as ContactWithJoinTags[],
+            ),
+          );
+        }
+
         setLoading(false);
         return;
       }
@@ -128,7 +242,7 @@ export function ConversationList({
     // `resyncToken` is included so the parent can force a refetch when
     // the realtime channel reconnects or the tab regains focus — catches
     // up on any events sent while the WS was disconnected or throttled.
-  }, [resyncToken, whatsappNumberId]);
+  }, [accountId, resyncToken, whatsappNumberId]);
 
   // Tag definitions for the filter picker — loaded once so labels/colours
   // stay stable regardless of which conversations happen to be loaded.

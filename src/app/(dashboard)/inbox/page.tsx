@@ -17,6 +17,7 @@ import { WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useWhatsAppNumbers } from '@/hooks/use-whatsapp-numbers';
 import { WhatsAppNumberFilter } from '@/components/whatsapp/number-filter';
+import { useAuth } from "@/hooks/use-auth";
 
 // Remembers the agent's show/hide choice for the desktop contact panel
 // across reloads and sessions (device-scoped, like the theme prefs).
@@ -37,6 +38,7 @@ function InboxPageInner() {
   const t = useTranslations("Inbox.page");
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { accountId } = useAuth();
   const { numbers, selectedNumberId, setSelectedNumberId } = useWhatsAppNumbers();
   /**
    * `?c=<id>` deep-link support. Used when landing here from the
@@ -604,6 +606,7 @@ function InboxPageInner() {
             onSelect={handleSelectConversation}
             conversations={conversations}
             onConversationsLoaded={handleConversationsLoaded}
+            accountId={accountId}
             resyncToken={resyncToken}
             whatsappNumberId={selectedNumberId}
           />
