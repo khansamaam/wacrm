@@ -45,9 +45,12 @@ const STATUS_COLORS: Record<ConversationStatus, string> = {
 };
 
 const INBOX_CONVERSATION_FETCH_LIMIT = 150;
+const INBOX_SEARCH_CONTACT_LIMIT = 300;
+const INBOX_SEARCH_DEBOUNCE_MS = 250;
 const CONVERSATION_LIGHT_SELECT =
   "id,user_id,contact_id,whatsapp_number_id,status,assigned_agent_id,last_message_text,last_message_at,unread_count,created_at,updated_at";
 const CONTACT_WITH_TAGS_SELECT = "*, contact_tags(tags(*))";
+const CONTACT_SEARCH_COLUMNS = ["name", "phone", "email", "company"] as const;
 
 type InboxFilter = ConversationStatus | "all" | "unread";
 
@@ -96,6 +99,32 @@ function attachContactsToConversations(
   }));
 }
 
+function sortConversationsByActivity(rows: Conversation[]): Conversation[] {
+  return [...rows].sort((a, b) => {
+    const aTime = Date.parse(a.last_message_at ?? a.updated_at ?? a.created_at);
+    const bTime = Date.parse(b.last_message_at ?? b.updated_at ?? b.created_at);
+    return bTime - aTime;
+  });
+}
+
+function mergeConversationRows(...groups: Conversation[][]): Conversation[] {
+  const byId = new Map<string, Conversation>();
+
+  for (const group of groups) {
+    for (const row of group) {
+      byId.set(row.id, {
+        ...byId.get(row.id),
+        ...row,
+      });
+    }
+  }
+
+  return sortConversationsByActivity(Array.from(byId.values())).slice(
+    0,
+    INBOX_CONVERSATION_FETCH_LIMIT,
+  );
+}
+
 export function ConversationList({
   activeConversationId,
   onSelect,
@@ -116,6 +145,7 @@ export function ConversationList({
   ], [t]);
 
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [filter, setFilter] = useState<InboxFilter>("all");
   const [loading, setLoading] = useState(true);
   // Contact-based filters (issue #272). Tags use OR logic (a conversation
@@ -143,6 +173,14 @@ export function ConversationList({
   });
 
   useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setDebouncedSearch(search.trim());
+    }, INBOX_SEARCH_DEBOUNCE_MS);
+
+    return () => window.clearTimeout(timeout);
+  }, [search]);
+
+  useEffect(() => {
     const supabase = createClient();
     let cancelled = false;
 
@@ -152,6 +190,125 @@ export function ConversationList({
       if (!accountId) {
         onConversationsLoadedRef.current([]);
         setLoading(false);
+        return;
+      }
+
+      async function hydrateLightweightConversations(
+        rows: Conversation[],
+      ): Promise<Conversation[]> {
+        const contactIds = Array.from(
+          new Set(rows.map((row) => row.contact_id).filter(Boolean)),
+        );
+
+        if (contactIds.length === 0) return rows;
+
+        const { data: contacts, error: contactsError } = await supabase
+          .from("contacts")
+          .select(CONTACT_WITH_TAGS_SELECT)
+          .in("id", contactIds);
+
+        if (contactsError) {
+          logInboxFetchWarning("contact_hydration_query", contactsError);
+          return rows;
+        }
+
+        return attachContactsToConversations(
+          rows,
+          (contacts ?? []) as ContactWithJoinTags[],
+        );
+      }
+
+      async function loadSearchResults(searchTerm: string) {
+        const likePattern = `%${searchTerm.slice(0, 80)}%`;
+        const contactSearchResults = await Promise.all(
+          CONTACT_SEARCH_COLUMNS.map(async (column) => {
+            const { data, error } = await supabase
+              .from("contacts")
+              .select("id")
+              .eq("account_id", accountId)
+              .ilike(column, likePattern)
+              .limit(INBOX_SEARCH_CONTACT_LIMIT);
+
+            if (error) {
+              logInboxFetchWarning(`contact_search_${column}`, error);
+              return [];
+            }
+
+            return (data ?? []).map((row) => row.id as string);
+          }),
+        );
+
+        const contactIds = Array.from(new Set(contactSearchResults.flat()));
+
+        const conversationQueries: Promise<Conversation[]>[] = [];
+
+        let messageQuery = supabase
+          .from("conversations")
+          .select(CONVERSATION_LIGHT_SELECT)
+          .eq("account_id", accountId)
+          .ilike("last_message_text", likePattern)
+          .order("last_message_at", { ascending: false, nullsFirst: false })
+          .order("updated_at", { ascending: false, nullsFirst: false })
+          .limit(INBOX_CONVERSATION_FETCH_LIMIT);
+
+        if (whatsappNumberId) {
+          messageQuery = messageQuery.eq("whatsapp_number_id", whatsappNumberId);
+        }
+
+        conversationQueries.push(
+          (async () => {
+            const { data, error } = await messageQuery;
+            if (error) {
+              logInboxFetchWarning("message_preview_search", error);
+              return [];
+            }
+            return (data ?? []) as Conversation[];
+          })(),
+        );
+
+        if (contactIds.length > 0) {
+          let contactConversationQuery = supabase
+            .from("conversations")
+            .select(CONVERSATION_LIGHT_SELECT)
+            .eq("account_id", accountId)
+            .in("contact_id", contactIds)
+            .order("last_message_at", { ascending: false, nullsFirst: false })
+            .order("updated_at", { ascending: false, nullsFirst: false })
+            .limit(INBOX_CONVERSATION_FETCH_LIMIT);
+
+          if (whatsappNumberId) {
+            contactConversationQuery = contactConversationQuery.eq(
+              "whatsapp_number_id",
+              whatsappNumberId,
+            );
+          }
+
+          conversationQueries.push(
+            (async () => {
+              const { data, error } = await contactConversationQuery;
+              if (error) {
+                logInboxFetchWarning("contact_conversation_search", error);
+                return [];
+              }
+              return (data ?? []) as Conversation[];
+            })(),
+          );
+        }
+
+        const conversationGroups = await Promise.all(conversationQueries);
+        if (cancelled) return;
+
+        const merged = mergeConversationRows(...conversationGroups);
+        const hydrated = await hydrateLightweightConversations(merged);
+        if (cancelled) return;
+
+        onConversationsLoadedRef.current(hydrated);
+        setLoading(false);
+      }
+
+      const searchTerm = debouncedSearch.trim();
+      if (searchTerm) {
+        await loadSearchResults(searchTerm);
         return;
       }
 
@@ -199,34 +356,10 @@ export function ConversationList({
         }
 
         const baseConversations = (fallbackRows ?? []) as Conversation[];
-        const contactIds = Array.from(
-          new Set(baseConversations.map((row) => row.contact_id).filter(Boolean)),
-        );
-
-        if (contactIds.length === 0) {
-          onConversationsLoadedRef.current(baseConversations);
-          setLoading(false);
-          return;
-        }
-
-        const { data: contacts, error: contactsError } = await supabase
-          .from("contacts")
-          .select(CONTACT_WITH_TAGS_SELECT)
-          .in("id", contactIds);
-
+        const hydrated = await hydrateLightweightConversations(baseConversations);
         if (cancelled) return;
 
-        if (contactsError) {
-          logInboxFetchWarning("contact_hydration_query", contactsError);
-          onConversationsLoadedRef.current(baseConversations);
-        } else {
-          onConversationsLoadedRef.current(
-            attachContactsToConversations(
-              baseConversations,
-              (contacts ?? []) as ContactWithJoinTags[],
-            ),
-          );
-        }
+        onConversationsLoadedRef.current(hydrated);
 
         setLoading(false);
         return;
@@ -242,7 +375,7 @@ export function ConversationList({
     // `resyncToken` is included so the parent can force a refetch when
     // the realtime channel reconnects or the tab regains focus — catches
     // up on any events sent while the WS was disconnected or throttled.
-  }, [accountId, resyncToken, whatsappNumberId]);
+  }, [accountId, debouncedSearch, resyncToken, whatsappNumberId]);
 
   // Tag definitions for the filter picker — loaded once so labels/colours
   // stay stable regardless of which conversations happen to be loaded.
@@ -300,8 +433,16 @@ export function ConversationList({
       result = result.filter((c) => {
         const name = c.contact?.name?.toLowerCase() ?? "";
         const phone = c.contact?.phone?.toLowerCase() ?? "";
+        const email = c.contact?.email?.toLowerCase() ?? "";
+        const company = c.contact?.company?.toLowerCase() ?? "";
         const lastMsg = c.last_message_text?.toLowerCase() ?? "";
-        return name.includes(q) || phone.includes(q) || lastMsg.includes(q);
+        return (
+          name.includes(q) ||
+          phone.includes(q) ||
+          email.includes(q) ||
+          company.includes(q) ||
+          lastMsg.includes(q)
+        );
       });
     }
 
