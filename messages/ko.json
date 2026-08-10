@@ -654,6 +654,12 @@
       "exportCsv": "CSV 내보내기",
       "noRecipients": "수신자가 없습니다.",
       "noRecipientsFilter": "이 필터와 일치하는 수신자가 없습니다.",
+      "pagination": {
+        "range": "{total}명 중 {start}-{end}명 표시",
+        "previous": "이전",
+        "next": "다음",
+        "pageOf": "{total}페이지 중 {page}페이지"
+      },
       "table": {
         "contact": "연락처",
         "phone": "전화번호",

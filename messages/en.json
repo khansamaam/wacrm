@@ -655,6 +655,12 @@
       "exportCsv": "Export CSV",
       "noRecipients": "No recipients found.",
       "noRecipientsFilter": "No recipients match this filter.",
+      "pagination": {
+        "range": "Showing {start}-{end} of {total}",
+        "previous": "Previous",
+        "next": "Next",
+        "pageOf": "Page {page} of {total}"
+      },
       "table": {
         "contact": "Contact",
         "phone": "Phone",

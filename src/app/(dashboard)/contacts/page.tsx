@@ -60,7 +60,7 @@ import { useTranslations } from 'next-intl';
 import { useWhatsAppNumbers } from '@/hooks/use-whatsapp-numbers';
 import { WhatsAppNumberFilter } from '@/components/whatsapp/number-filter';
 
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 100;
 
 interface ContactWithTags extends Contact {
   tags?: Tag[];
@@ -130,58 +130,29 @@ export default function ContactsPage() {
     setSelected(new Set());
 
     const from = page * PAGE_SIZE;
-    const to = from + PAGE_SIZE - 1;
     const term = search.trim();
 
-    let contactRows: Contact[];
-    let count: number;
-
-    if (selectedTagIds.length > 0) {
-      // Tag filter active — resolve it server-side (join + distinct +
-      // windowed total count + pagination) so a tag covering many
-      // contacts can't silently truncate the result or overflow an IN
-      // clause. See migration 025_filter_contacts_by_tags.
-      const { data, error } = await supabase.rpc('filter_contacts_by_tags_and_number', {
-        p_tag_ids: selectedTagIds,
-        p_whatsapp_number_id: selectedNumberId,
-        p_search: term || null,
-        p_limit: PAGE_SIZE,
-        p_offset: from,
-      });
-      if (seq !== fetchSeq.current) return; // superseded by a newer fetch
-      if (error) {
-        toast.error(t('toastFailedLoad'));
-        setLoading(false);
-        return;
-      }
-      const rows = (data ?? []) as { contact: Contact; total_count: number }[];
-      contactRows = rows.map((r) => r.contact);
-      count = rows.length > 0 ? Number(rows[0].total_count) : 0;
-    } else {
-      let query = supabase
-        .from('contacts')
-        .select(selectedNumberId ? '*, conversations!inner(whatsapp_number_id)' : '*', { count: 'exact' })
-        .order('created_at', { ascending: false })
-        .range(from, to);
-
-      if (term) {
-        const like = `%${term}%`;
-        query = query.or(`name.ilike.${like},phone.ilike.${like},email.ilike.${like}`);
-      }
-      if (selectedNumberId) {
-        query = query.eq('conversations.whatsapp_number_id', selectedNumberId);
-      }
-
-      const { data, count: exactCount, error } = await query;
-      if (seq !== fetchSeq.current) return; // superseded by a newer fetch
-      if (error) {
-        toast.error(t('toastFailedLoad'));
-        setLoading(false);
-        return;
-      }
-      contactRows = (data ?? []) as unknown as Contact[];
-      count = exactCount ?? 0;
+    // Always page/search/filter on the database, never from the already
+    // visible rows. This keeps search global for large contact books and
+    // avoids duplicate contacts when filtering by WhatsApp number via
+    // conversations. See migration 056_list_contacts_page.
+    const { data, error } = await supabase.rpc('list_contacts_page', {
+      p_tag_ids: selectedTagIds.length > 0 ? selectedTagIds : null,
+      p_whatsapp_number_id: selectedNumberId,
+      p_search: term || null,
+      p_limit: PAGE_SIZE,
+      p_offset: from,
+    });
+    if (seq !== fetchSeq.current) return; // superseded by a newer fetch
+    if (error) {
+      toast.error(t('toastFailedLoad'));
+      setLoading(false);
+      return;
     }
+
+    const rows = (data ?? []) as { contact: Contact; total_count: number }[];
+    const contactRows = rows.map((r) => r.contact);
+    const count = rows.length > 0 ? Number(rows[0].total_count) : 0;
 
     setTotalCount(count);
 

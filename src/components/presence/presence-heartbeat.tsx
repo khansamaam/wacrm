@@ -40,6 +40,7 @@ export function PresenceHeartbeat() {
     const supabase = createClient();
     let cancelled = false;
     let lastBeatAt = 0;
+    let warnedAboutFailure = false;
     lastActivityRef.current = Date.now();
 
     const markActive = () => {
@@ -64,16 +65,19 @@ export function PresenceHeartbeat() {
         const { error } = await supabase.rpc('touch_presence', {
           p_status: currentStatus(),
         });
-        if (error && !cancelled) {
-          // Non-fatal: presence is best-effort. Log once per failure so a
-          // misconfigured RPC is visible without spamming.
-          console.error(
+        if (error && !cancelled && !warnedAboutFailure) {
+          // Non-fatal: presence is best-effort. Use console.warn instead of
+          // console.error so Next's development overlay doesn't block the app
+          // for a temporary heartbeat/RPC failure.
+          warnedAboutFailure = true;
+          console.warn(
             '[PresenceHeartbeat] touch_presence failed:',
             error.message
           );
         }
       } catch (error) {
-        if (!cancelled) {
+        if (!cancelled && !warnedAboutFailure) {
+          warnedAboutFailure = true;
           console.warn(
             '[PresenceHeartbeat] touch_presence network failure:',
             error instanceof Error ? error.message : String(error)
