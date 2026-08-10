@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Broadcast, BroadcastRecipient, RecipientStatus } from '@/types';
@@ -31,6 +31,8 @@ import {
   Filter,
   Download,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -120,6 +122,7 @@ const RECIPIENT_STATUSES: readonly RecipientStatus[] = [
   'replied',
   'failed',
 ];
+const RECIPIENT_PAGE_SIZE = 100;
 
 /**
  * CSV export helper — RFC 4180 quoting. Quote every field so
@@ -152,15 +155,19 @@ export default function BroadcastDetailPage() {
   const [broadcast, setBroadcast] = useState<Broadcast | null>(null);
   const [recipients, setRecipients] = useState<BroadcastRecipient[]>([]);
   const [loading, setLoading] = useState(true);
+  const [recipientsLoading, setRecipientsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<RecipientStatus | 'all'>(
     'all',
   );
+  const [recipientPage, setRecipientPage] = useState(1);
+  const [recipientCount, setRecipientCount] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
-    async function fetchData() {
+    async function fetchBroadcast() {
       try {
         const supabase = createClient();
 
@@ -172,15 +179,6 @@ export default function BroadcastDetailPage() {
 
         if (bcError) throw bcError;
         setBroadcast(bc);
-
-        const { data: recs, error: recsError } = await supabase
-          .from('broadcast_recipients')
-          .select('*, contact:contacts(*)')
-          .eq('broadcast_id', broadcastId)
-          .order('created_at', { ascending: false });
-
-        if (recsError) throw recsError;
-        setRecipients(recs ?? []);
       } catch (err) {
         setError(err instanceof Error ? err.message : t('notFound'));
       } finally {
@@ -188,40 +186,122 @@ export default function BroadcastDetailPage() {
       }
     }
 
-    fetchData();
-  }, [broadcastId]);
+    fetchBroadcast();
+  }, [broadcastId, t]);
 
-  const filteredRecipients = useMemo(
-    () =>
-      statusFilter === 'all'
-        ? recipients
-        : recipients.filter((r) => r.status === statusFilter),
-    [recipients, statusFilter],
-  );
+  useEffect(() => {
+    setRecipientPage(1);
+  }, [statusFilter]);
 
-  function handleExport() {
+  useEffect(() => {
+    let cancelled = false;
+
+    async function fetchRecipientPage() {
+      setRecipientsLoading(true);
+      const from = (recipientPage - 1) * RECIPIENT_PAGE_SIZE;
+      const to = from + RECIPIENT_PAGE_SIZE - 1;
+      const supabase = createClient();
+
+      let query = supabase
+        .from('broadcast_recipients')
+        .select('*, contact:contacts(*)', { count: 'exact' })
+        .eq('broadcast_id', broadcastId)
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .range(from, to);
+
+      if (statusFilter !== 'all') {
+        query = query.eq('status', statusFilter);
+      }
+
+      const { data, error: recipientsError, count } = await query;
+      if (cancelled) return;
+
+      if (recipientsError) {
+        toast.error(recipientsError.message);
+        setRecipients([]);
+        setRecipientCount(0);
+      } else {
+        setRecipients((data ?? []) as BroadcastRecipient[]);
+        setRecipientCount(count ?? 0);
+      }
+      setRecipientsLoading(false);
+    }
+
+    fetchRecipientPage();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [broadcastId, recipientPage, statusFilter]);
+
+  async function fetchRecipientsForExport(): Promise<BroadcastRecipient[]> {
+    const supabase = createClient();
+    const rows: BroadcastRecipient[] = [];
+    let page = 0;
+
+    while (true) {
+      const from = page * RECIPIENT_PAGE_SIZE;
+      const to = from + RECIPIENT_PAGE_SIZE - 1;
+      let query = supabase
+        .from('broadcast_recipients')
+        .select('*, contact:contacts(*)')
+        .eq('broadcast_id', broadcastId)
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .range(from, to);
+
+      if (statusFilter !== 'all') {
+        query = query.eq('status', statusFilter);
+      }
+
+      const { data, error: exportError } = await query;
+      if (exportError) throw exportError;
+
+      const batch = (data ?? []) as BroadcastRecipient[];
+      rows.push(...batch);
+      if (batch.length < RECIPIENT_PAGE_SIZE) break;
+      page += 1;
+    }
+
+    return rows;
+  }
+
+  async function handleExport() {
     if (!broadcast) return;
-    const header = [
-      t('table.contact'),
-      t('table.phone'),
-      t('table.status'),
-      t('table.sent'),
-      t('table.delivered'),
-      t('table.read'),
-      t('table.error'),
-    ];
-    const rows = recipients.map((r) => [
-      r.contact?.name ?? '',
-      r.contact?.phone ?? '',
-      r.status,
-      r.sent_at ?? '',
-      r.delivered_at ?? '',
-      r.read_at ?? '',
-      r.error_message ?? '',
-    ]);
-    const csv = toCsv([header, ...rows]);
-    const safeName = broadcast.name.replace(/[^a-z0-9-_]+/gi, '-').toLowerCase();
-    downloadBlob(`broadcast-${safeName}-${broadcastId.slice(0, 8)}.csv`, csv);
+    setExporting(true);
+    try {
+      const exportRows = await fetchRecipientsForExport();
+      const header = [
+        t('table.contact'),
+        t('table.phone'),
+        t('table.status'),
+        t('table.sent'),
+        t('table.delivered'),
+        t('table.read'),
+        t('table.error'),
+      ];
+      const rows = exportRows.map((r) => [
+        r.contact?.name ?? '',
+        r.contact?.phone ?? '',
+        r.status,
+        r.sent_at ?? '',
+        r.delivered_at ?? '',
+        r.read_at ?? '',
+        r.error_message ?? '',
+      ]);
+      const csv = toCsv([header, ...rows]);
+      const safeName = broadcast.name
+        .replace(/[^a-z0-9-_]+/gi, '-')
+        .toLowerCase();
+      downloadBlob(`broadcast-${safeName}-${broadcastId.slice(0, 8)}.csv`, csv);
+    } catch (exportError) {
+      toast.error(
+        exportError instanceof Error ? exportError.message : 'Export failed',
+      );
+    } finally {
+      setExporting(false);
+    }
   }
 
   async function handleDelete() {
@@ -264,6 +344,13 @@ export default function BroadcastDetailPage() {
   }
 
   const status = getBroadcastStatus(broadcast.status);
+  const pageCount = Math.max(1, Math.ceil(recipientCount / RECIPIENT_PAGE_SIZE));
+  const pageStart =
+    recipientCount === 0 ? 0 : (recipientPage - 1) * RECIPIENT_PAGE_SIZE + 1;
+  const pageEnd = Math.min(
+    recipientPage * RECIPIENT_PAGE_SIZE,
+    recipientCount,
+  );
 
   const funnelSteps: FunnelStep[] = [
     { label: t('stats.sent'), value: broadcast.sent_count, color: 'bg-primary' },
@@ -401,8 +488,11 @@ export default function BroadcastDetailPage() {
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
           <h2 className="text-sm font-medium text-foreground">
             {statusFilter !== 'all'
-              ? t('recipientsHeader', { filtered: filteredRecipients.length, total: recipients.length })
-              : t('recipientsHeaderAll', { total: recipients.length })}
+              ? t('recipientsHeader', {
+                  filtered: recipientCount,
+                  total: broadcast.total_recipients,
+                })
+              : t('recipientsHeaderAll', { total: recipientCount })}
           </h2>
           <div className="flex items-center gap-2">
             <DropdownMenu>
@@ -450,19 +540,27 @@ export default function BroadcastDetailPage() {
               variant="outline"
               size="sm"
               onClick={handleExport}
-              disabled={recipients.length === 0}
+              disabled={recipientCount === 0 || exporting}
               className="border-border text-muted-foreground hover:bg-muted"
             >
-              <Download className="h-3.5 w-3.5" />
+              {exporting ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Download className="h-3.5 w-3.5" />
+              )}
               {t('exportCsv')}
             </Button>
           </div>
         </div>
 
-        {filteredRecipients.length === 0 ? (
+        {recipientsLoading ? (
+          <div className="flex h-32 items-center justify-center">
+            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+          </div>
+        ) : recipients.length === 0 ? (
           <div className="flex h-32 items-center justify-center">
             <p className="text-sm text-muted-foreground">
-              {recipients.length === 0
+              {recipientCount === 0 && statusFilter === 'all'
                 ? t('noRecipients')
                 : t('noRecipientsFilter')}
             </p>
@@ -482,7 +580,7 @@ export default function BroadcastDetailPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredRecipients.map((recipient) => {
+                {recipients.map((recipient) => {
                   const rStatus = getRecipientStatus(recipient.status);
                   return (
                     <TableRow key={recipient.id} className="border-border">
@@ -524,6 +622,46 @@ export default function BroadcastDetailPage() {
             </Table>
           </div>
         )}
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3">
+          <p className="text-xs text-muted-foreground">
+            {t('pagination.range', {
+              start: pageStart.toLocaleString(),
+              end: pageEnd.toLocaleString(),
+              total: recipientCount.toLocaleString(),
+            })}
+          </p>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={recipientPage <= 1 || recipientsLoading}
+              onClick={() => setRecipientPage((page) => Math.max(1, page - 1))}
+              className="border-border text-muted-foreground hover:bg-muted"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+              {t('pagination.previous')}
+            </Button>
+            <span className="min-w-24 text-center text-xs text-muted-foreground">
+              {t('pagination.pageOf', {
+                page: recipientPage.toLocaleString(),
+                total: pageCount.toLocaleString(),
+              })}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={recipientPage >= pageCount || recipientsLoading}
+              onClick={() =>
+                setRecipientPage((page) => Math.min(pageCount, page + 1))
+              }
+              className="border-border text-muted-foreground hover:bg-muted"
+            >
+              {t('pagination.next')}
+              <ChevronRight className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
       </div>
     </div>
   );
