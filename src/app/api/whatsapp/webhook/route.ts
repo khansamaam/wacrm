@@ -6,6 +6,7 @@ import { getMediaUrl } from '@/lib/whatsapp/meta-api'
 import { normalizePhone } from '@/lib/whatsapp/phone-utils'
 import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
+import { matchesWebhookVerifyToken } from '@/lib/whatsapp/webhook-verification'
 import {
   deliveryErrorLabel,
   parseMetaDeliveryError,
@@ -171,6 +172,15 @@ export async function GET(request: Request) {
       )
     }
 
+    // A platform token allows Meta to verify a brand-new app before its first
+    // WhatsApp number exists in the database. Existing per-number tokens remain
+    // valid below, so this is additive and requires no connection migration.
+    const platformVerifyToken =
+      process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN?.trim()
+    if (matchesWebhookVerifyToken(verifyToken, platformVerifyToken)) {
+      return webhookChallengeResponse(challenge)
+    }
+
     // Every connected number may carry its own verification token.
     const { data: configs, error: configError } = await supabaseAdmin()
       .from('whatsapp_numbers')
@@ -192,7 +202,9 @@ export async function GET(request: Request) {
     for (const config of configs) {
       if (!config.verify_token) continue
       try {
-        if (decrypt(config.verify_token) === verifyToken) {
+        if (
+          matchesWebhookVerifyToken(verifyToken, decrypt(config.verify_token))
+        ) {
           matchedConfig = config
           break
         }
@@ -218,11 +230,7 @@ export async function GET(request: Request) {
             }
           })
       }
-      // Return challenge as plain text
-      return new Response(challenge, {
-        status: 200,
-        headers: { 'Content-Type': 'text/plain' },
-      })
+      return webhookChallengeResponse(challenge)
     }
 
     return NextResponse.json(
@@ -236,6 +244,16 @@ export async function GET(request: Request) {
       { status: 500 }
     )
   }
+}
+
+function webhookChallengeResponse(challenge: string): Response {
+  return new Response(challenge, {
+    status: 200,
+    headers: {
+      'Cache-Control': 'no-store',
+      'Content-Type': 'text/plain',
+    },
+  })
 }
 
 // POST - Receive messages
