@@ -75,8 +75,14 @@ export async function POST(request: Request) {
     const legacyConfiguredAppId =
       process.env.META_APP_ID ?? process.env.NEXT_PUBLIC_META_APP_ID;
     const appId = requestedAppId || legacyConfiguredAppId || '';
-    const appSecret = requestedAppSecret;
-    if (!appId || !appSecret || !requestedCoexistenceConfigId) {
+    // Prefer an explicit per-connection value for backwards compatibility,
+    // otherwise use the platform secret without exposing it to the browser.
+    const appSecret = requestedAppSecret || process.env.META_APP_SECRET || '';
+    const coexistenceConfigId =
+      requestedCoexistenceConfigId ||
+      process.env.NEXT_PUBLIC_META_COEXISTENCE_CONFIG_ID ||
+      '';
+    if (!appId || !appSecret || !coexistenceConfigId) {
       return NextResponse.json(
         {
           error:
@@ -142,7 +148,7 @@ export async function POST(request: Request) {
         access_token: encrypt(accessToken),
         meta_app_id: appId,
         meta_app_secret: encrypt(appSecret),
-        meta_coexistence_config_id: requestedCoexistenceConfigId,
+        meta_coexistence_config_id: coexistenceConfigId,
         status: 'connected',
         is_default: (count ?? 0) === 0,
         connected_at: now,

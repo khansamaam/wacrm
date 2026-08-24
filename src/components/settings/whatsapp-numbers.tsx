@@ -87,6 +87,7 @@ export function WhatsAppNumbers() {
   const [metaAppId, setMetaAppId] = useState('');
   const [metaAppSecret, setMetaAppSecret] = useState('');
   const [metaCoexistenceConfigId, setMetaCoexistenceConfigId] = useState('');
+  const [hasServerMetaAppSecret, setHasServerMetaAppSecret] = useState(false);
   const [loadingEmbeddedConfig, setLoadingEmbeddedConfig] = useState(false);
   const [editingNumber, setEditingNumber] = useState<WhatsAppNumber | null>(
     null
@@ -146,6 +147,7 @@ export function WhatsAppNumbers() {
       const coexistenceConfigId = readString(body.coexistenceConfigId);
       if (appId) setMetaAppId(appId);
       if (coexistenceConfigId) setMetaCoexistenceConfigId(coexistenceConfigId);
+      setHasServerMetaAppSecret(body.hasAppSecret === true);
     } catch (error) {
       toast.error(
         error instanceof Error
@@ -232,6 +234,7 @@ export function WhatsAppNumbers() {
     setMetaAppId('');
     setMetaAppSecret('');
     setMetaCoexistenceConfigId('');
+    setHasServerMetaAppSecret(false);
     setDialogOpen(true);
   }
 
@@ -277,7 +280,11 @@ export function WhatsAppNumbers() {
     const appId = metaAppId.trim();
     const appSecret = metaAppSecret.trim();
     const coexistenceConfigId = metaCoexistenceConfigId.trim();
-    if (!appId || !coexistenceConfigId || !appSecret) {
+    if (
+      !appId ||
+      !coexistenceConfigId ||
+      (!appSecret && !hasServerMetaAppSecret)
+    ) {
       toast.error(
         'Enter the Meta App ID, App Secret, and Coexistence Configuration ID'
       );
@@ -715,8 +722,17 @@ export function WhatsAppNumbers() {
                   type="password"
                   value={metaAppSecret}
                   onChange={(event) => setMetaAppSecret(event.target.value)}
-                  placeholder="Paste this number’s Meta App Secret"
+                  placeholder={
+                    hasServerMetaAppSecret
+                      ? 'Configured securely on the server'
+                      : 'Paste this number’s Meta App Secret'
+                  }
                 />
+                {hasServerMetaAppSecret && (
+                  <p className="text-muted-foreground mt-1 text-xs">
+                    Leave this blank to use the server-configured App Secret.
+                  </p>
+                )}
               </Field>
               <Field label="Coexistence Configuration ID">
                 <Input
@@ -745,7 +761,7 @@ export function WhatsAppNumbers() {
                     submitting ||
                     loadingEmbeddedConfig ||
                     !metaAppId.trim() ||
-                    !metaAppSecret.trim() ||
+                    (!metaAppSecret.trim() && !hasServerMetaAppSecret) ||
                     !metaCoexistenceConfigId.trim()
                   }
                   onClick={() => void startCoexistenceSignup()}
