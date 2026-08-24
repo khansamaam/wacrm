@@ -144,10 +144,31 @@ function emptyButton(type: TemplateButton['type']): TemplateButton {
 
 function normalizeMediaUrl(value: string): string {
   const trimmed = value.trim();
-  if (/^http:\/\//i.test(trimmed)) {
-    return `https://${trimmed.slice('http://'.length)}`;
+  if (!/^http:\/\//i.test(trimmed)) return trimmed;
+
+  try {
+    const url = new URL(trimmed);
+    const hostname = url.hostname.toLowerCase();
+    const isLocalHost =
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '::1' ||
+      hostname.endsWith('.local');
+    const isPrivateLan =
+      /^10\./.test(hostname) ||
+      /^192\.168\./.test(hostname) ||
+      /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname);
+
+    // Local/self-hosted development Supabase commonly serves Storage over
+    // plain HTTP (for example http://localhost:8000). Keep those URLs intact
+    // so the browser preview works. Public Meta-facing media should still be
+    // HTTPS, so non-local HTTP links are upgraded below.
+    if (isLocalHost || isPrivateLan) return trimmed;
+  } catch {
+    // Fall through to the conservative HTTPS upgrade for malformed input.
   }
-  return trimmed;
+
+  return `https://${trimmed.slice('http://'.length)}`;
 }
 
 async function readTemplateApiResponse(
