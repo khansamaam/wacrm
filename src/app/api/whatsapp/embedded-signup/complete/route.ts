@@ -72,14 +72,22 @@ export async function POST(request: Request) {
       );
     }
 
-    const legacyConfiguredAppId =
-      process.env.META_APP_ID ?? process.env.NEXT_PUBLIC_META_APP_ID;
-    const appId = requestedAppId || legacyConfiguredAppId || '';
+    const appId =
+      requestedAppId ||
+      process.env.META_COEXISTENCE_APP_ID ||
+      process.env.NEXT_PUBLIC_META_APP_ID ||
+      process.env.META_APP_ID ||
+      '';
     // Prefer an explicit per-connection value for backwards compatibility,
     // otherwise use the platform secret without exposing it to the browser.
-    const appSecret = requestedAppSecret || process.env.META_APP_SECRET || '';
+    const appSecret =
+      requestedAppSecret ||
+      process.env.META_COEXISTENCE_APP_SECRET ||
+      process.env.META_APP_SECRET ||
+      '';
     const coexistenceConfigId =
       requestedCoexistenceConfigId ||
+      process.env.META_COEXISTENCE_CONFIG_ID ||
       process.env.NEXT_PUBLIC_META_COEXISTENCE_CONFIG_ID ||
       '';
     if (!appId || !appSecret || !coexistenceConfigId) {
