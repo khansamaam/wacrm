@@ -4,6 +4,7 @@ import { useState } from 'react';
 
 import { useAuth } from '@/hooks/use-auth';
 import { createClient } from '@/lib/supabase/client';
+import { normalizeKey } from '@/lib/contacts/dedupe';
 import { buildBroadcastTemplateParams } from '@/lib/whatsapp/broadcast-template-params';
 import {
   resolveBroadcastVariables,
@@ -189,11 +190,12 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         .from('contacts')
         .select('*')
         .eq('account_id', activeAccountId)
-        .in('phone', phones.slice(i, i + IN_FILTER_CHUNK_SIZE));
+        .in('phone_normalized', phones.slice(i, i + IN_FILTER_CHUNK_SIZE));
       if (error)
         throw new Error(`Failed to look up CSV contacts: ${error.message}`);
       for (const contact of (data ?? []) as Contact[]) {
-        if (contact.phone) byPhone.set(contact.phone, contact);
+        const phoneKey = normalizeKey(contact.phone ?? '');
+        if (phoneKey) byPhone.set(phoneKey, contact);
       }
     }
 
@@ -213,7 +215,8 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       if (error)
         throw new Error(`Failed to create CSV contacts: ${error.message}`);
       for (const contact of (data ?? []) as Contact[]) {
-        if (contact.phone) byPhone.set(contact.phone, contact);
+        const phoneKey = normalizeKey(contact.phone ?? '');
+        if (phoneKey) byPhone.set(phoneKey, contact);
       }
     }
 

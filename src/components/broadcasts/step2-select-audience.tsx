@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { parseBroadcastAudienceCsv } from '@/lib/broadcasts/parse-audience-csv';
 import { CustomField, Tag } from '@/types';
 import { Button } from '@/components/ui/button';
 import {
@@ -13,6 +14,9 @@ import {
   ArrowRight,
   ArrowLeft,
   X,
+  FileText,
+  Trash2,
+  AlertTriangle,
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 
@@ -24,7 +28,6 @@ interface CustomFieldFilter {
   operator: CustomFieldOperator;
   value: string;
 }
-
 interface AudienceConfig {
   type: AudienceType;
   tagIds?: string[];
@@ -47,6 +50,7 @@ export function Step2SelectAudience({
   onBack,
 }: Step2Props) {
   const t = useTranslations('Broadcasts.wizard');
+  const csvInputRef = useRef<HTMLInputElement>(null);
 
   const OPERATOR_OPTIONS = useMemo<{ value: CustomFieldOperator; label: string }[]>(() => [
     { value: 'is', label: t('selectAudience.operatorIs') },
@@ -91,6 +95,9 @@ export function Step2SelectAudience({
   const [loadingFields, setLoadingFields] = useState(false);
   const [estimatedCount, setEstimatedCount] = useState<number | null>(null);
   const [loadingCount, setLoadingCount] = useState(false);
+  const [csvFileName, setCsvFileName] = useState('');
+  const [csvError, setCsvError] = useState('');
+  const [csvStats, setCsvStats] = useState({ invalid: 0, duplicates: 0 });
 
   // Tags are used both by the primary "Filter by Tags" audience type
   // AND by the exclude-list below — so always load once on mount.
@@ -236,6 +243,57 @@ export function Step2SelectAudience({
       value: '',
     };
     onUpdate({ ...audience, customField: { ...prev, ...patch } });
+  }
+
+  function clearCsv() {
+    setCsvFileName('');
+    setCsvError('');
+    setCsvStats({ invalid: 0, duplicates: 0 });
+    if (csvInputRef.current) csvInputRef.current.value = '';
+    onUpdate({ ...audience, csvContacts: undefined });
+  }
+
+  function openCsvPicker() {
+    if (!csvInputRef.current) return;
+    // Reset the native input so selecting the same file again (after fixing
+    // it locally) still triggers onChange.
+    csvInputRef.current.value = '';
+    csvInputRef.current.click();
+  }
+
+  async function handleCsvFileChange(
+    event: React.ChangeEvent<HTMLInputElement>
+  ) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setCsvFileName(file.name);
+    setCsvError('');
+    setCsvStats({ invalid: 0, duplicates: 0 });
+
+    try {
+      const result = parseBroadcastAudienceCsv(await file.text());
+      if (!result.hasPhoneColumn) {
+        setCsvError(t('selectAudience.errorCsvMissingPhone'));
+        onUpdate({ ...audience, csvContacts: undefined });
+        return;
+      }
+
+      if (result.contacts.length === 0) {
+        setCsvError(t('selectAudience.errorCsvNoValidContacts'));
+        onUpdate({ ...audience, csvContacts: undefined });
+        return;
+      }
+
+      setCsvStats({
+        invalid: result.invalidRows,
+        duplicates: result.duplicateRows,
+      });
+      onUpdate({ ...audience, csvContacts: result.contacts });
+    } catch {
+      setCsvError(t('selectAudience.errorCsvParse'));
+      onUpdate({ ...audience, csvContacts: undefined });
+    }
   }
 
   const isValid =
@@ -386,6 +444,116 @@ export function Step2SelectAudience({
                 placeholder={t('selectAudience.valuePlaceholder')}
                 className="h-9 rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
               />
+            </div>
+          )}
+        </div>
+      )}
+
+      {audience.type === 'csv' && (
+        <div className="border-border bg-card/50 space-y-4 rounded-xl border p-4">
+          <input
+            ref={csvInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            onChange={handleCsvFileChange}
+            className="hidden"
+          />
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-foreground text-sm font-medium">
+                {t('selectAudience.uploadCsv')}
+              </p>
+              <p className="text-muted-foreground mt-1 text-xs">
+                {t('selectAudience.csvFormatDesc')}
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={openCsvPicker}
+              className="border-border shrink-0"
+            >
+              <Upload className="h-4 w-4" />
+              {csvFileName
+                ? t('selectAudience.replaceCsv')
+                : t('selectAudience.chooseCsv')}
+            </Button>
+          </div>
+
+          {csvFileName && (
+            <div className="border-border bg-muted/60 flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5">
+              <div className="flex min-w-0 items-center gap-2">
+                <FileText className="text-primary h-4 w-4 shrink-0" />
+                <span
+                  className="text-foreground truncate text-sm"
+                  title={csvFileName}
+                >
+                  {csvFileName}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={clearCsv}
+                className="text-muted-foreground hover:bg-background rounded-md p-1.5 transition-colors hover:text-red-400"
+                aria-label={t('selectAudience.removeCsv')}
+                title={t('selectAudience.removeCsv')}
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+
+          {csvError && (
+            <div className="flex items-start gap-2 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-xs text-red-300">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{csvError}</span>
+            </div>
+          )}
+
+          {(audience.csvContacts?.length ?? 0) > 0 && (
+            <div className="space-y-3">
+              <p className="text-primary text-xs font-medium">
+                {t('selectAudience.csvContactsFound', {
+                  count: audience.csvContacts?.length ?? 0,
+                })}
+              </p>
+
+              {(csvStats.invalid > 0 || csvStats.duplicates > 0) && (
+                <p className="text-xs text-amber-300">
+                  {t('selectAudience.csvRowsSkipped', {
+                    invalid: csvStats.invalid,
+                    duplicates: csvStats.duplicates,
+                  })}
+                </p>
+              )}
+
+              <div className="border-border overflow-hidden rounded-lg border">
+                <div className="border-border bg-background/60 text-muted-foreground grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] border-b px-3 py-2 text-[11px] font-medium tracking-wide uppercase">
+                  <span>{t('selectAudience.csvPhone')}</span>
+                  <span>{t('selectAudience.csvName')}</span>
+                </div>
+                {audience.csvContacts?.slice(0, 5).map((contact) => (
+                  <div
+                    key={contact.phone}
+                    className="border-border/60 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] border-b px-3 py-2 text-xs last:border-b-0"
+                  >
+                    <span className="text-foreground truncate font-mono">
+                      {contact.phone}
+                    </span>
+                    <span className="text-muted-foreground truncate">
+                      {contact.name || '—'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {(audience.csvContacts?.length ?? 0) > 5 && (
+                <p className="text-muted-foreground text-xs">
+                  {t('selectAudience.csvMoreContacts', {
+                    count: (audience.csvContacts?.length ?? 0) - 5,
+                  })}
+                </p>
+              )}
             </div>
           )}
         </div>

@@ -737,10 +737,18 @@
         "uploadCsv": "Upload CSV File",
         "csvFormatDesc": "Must contain a 'phone' column (E.164 format). 'name' column is optional.",
         "csvContactsFound": "{count} valid contact(s) found in CSV.",
+        "chooseCsv": "Choose CSV",
+        "replaceCsv": "Replace CSV",
+        "removeCsv": "Remove CSV",
+        "csvRowsSkipped": "Skipped {invalid} invalid and {duplicates} duplicate row(s).",
+        "csvPhone": "Phone",
+        "csvName": "Name",
+        "csvMoreContacts": "And {count} more contact(s).",
         "errorLoadTags": "Failed to load tags",
         "errorLoadFields": "Failed to load custom fields",
         "errorCsvParse": "Could not parse CSV file.",
-        "errorCsvMissingPhone": "CSV must have a 'phone' column."
+        "errorCsvMissingPhone": "CSV must have a 'phone' column.",
+        "errorCsvNoValidContacts": "The CSV does not contain any valid E.164 phone numbers."
       },
       "personalize": {
         "title": "Personalize Variables",
