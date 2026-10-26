@@ -231,6 +231,8 @@ export interface FlowRow {
   /** Author. Used as a default sender-of-record on engine sends and
    *  preserved on flow_runs for log/audit display. */
   user_id: string;
+  /** WhatsApp number the flow runs on (migration 061); null = all. */
+  whatsapp_number_id?: string | null;
   name: string;
   description: string | null;
   status: "draft" | "active" | "archived";
@@ -339,6 +341,9 @@ export interface DispatchInboundInput {
   contactId: string;
   conversationId: string;
   message: ParsedInbound;
+  /** WhatsApp number the message arrived on. Only flows of this number
+   *  (or unscoped flows) can start (migration 061). */
+  whatsappNumberId?: string | null;
 }
 
 export interface DispatchInboundResult {

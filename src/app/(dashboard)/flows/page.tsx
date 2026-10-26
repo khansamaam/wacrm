@@ -20,6 +20,14 @@ import {
 
 import { useTranslations } from "next-intl";
 import { useCan } from "@/hooks/use-can";
+import { useWhatsAppNumbers } from "@/hooks/use-whatsapp-numbers";
+import { WhatsAppNumberFilter } from "@/components/whatsapp/number-filter";
+import {
+  NumberScopeSelect,
+  defaultScopeNumberId,
+  matchesNumber,
+  writableNumbers,
+} from "@/components/whatsapp/number-scope-select";
 import { Button } from "@/components/ui/button";
 import { GatedButton } from "@/components/ui/gated-button";
 import {
@@ -43,6 +51,7 @@ import { cn } from "@/lib/utils";
  */
 
 interface FlowRow {
+  whatsapp_number_id?: string | null;
   id: string;
   name: string;
   description: string | null;
@@ -92,6 +101,17 @@ export default function FlowsPage() {
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
+  // Flows are separate per WhatsApp number (migration 061).
+  const { numbers, selectedNumberId, setSelectedNumberId } = useWhatsAppNumbers();
+  const [numberChoice, setNumberChoice] = useState<string | null>(null);
+  const createNumberId =
+    numberChoice ?? defaultScopeNumberId(numbers, selectedNumberId);
+  const visibleFlows = flows.filter((flow) =>
+    matchesNumber(flow.whatsapp_number_id, selectedNumberId)
+  );
+  const numberScopeBody = createNumberId
+    ? { whatsapp_number_id: createNumberId }
+    : {};
 
   useEffect(() => {
     let cancelled = false;
@@ -139,6 +159,7 @@ export default function FlowsPage() {
           name: newName.trim(),
           trigger_type: "keyword",
           trigger_config: { keywords: [] },
+          ...numberScopeBody,
         }),
       });
       if (!res.ok) throw new Error(`Create failed: ${res.status}`);
@@ -160,7 +181,7 @@ export default function FlowsPage() {
       const res = await fetch("/api/flows", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ template_slug: slug }),
+        body: JSON.stringify({ template_slug: slug, ...numberScopeBody }),
       });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
@@ -213,17 +234,24 @@ export default function FlowsPage() {
             {t("description")}
           </p>
         </div>
-        <GatedButton
-          canAct={canCreate}
-          gateReason="create flows"
-          onClick={() => setCreateOpen(true)}
-        >
-          <Plus className="h-4 w-4" />
-          {t("newFlow")}
-        </GatedButton>
+        <div className="flex flex-wrap items-center gap-2">
+          <WhatsAppNumberFilter
+            numbers={numbers}
+            value={selectedNumberId}
+            onChange={setSelectedNumberId}
+          />
+          <GatedButton
+            canAct={canCreate}
+            gateReason="create flows"
+            onClick={() => setCreateOpen(true)}
+          >
+            <Plus className="h-4 w-4" />
+            {t("newFlow")}
+          </GatedButton>
+        </div>
       </header>
 
-      {flows.length === 0 ? (
+      {visibleFlows.length === 0 ? (
         <EmptyState
           onCreate={() => setCreateOpen(true)}
           canCreate={canCreate}
@@ -231,7 +259,7 @@ export default function FlowsPage() {
         />
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {flows.map((flow) => (
+          {visibleFlows.map((flow) => (
             <FlowCard
               key={flow.id}
               flow={flow}
@@ -255,6 +283,13 @@ export default function FlowsPage() {
               {t("createDesc")}
             </DialogDescription>
           </DialogHeader>
+
+          <NumberScopeSelect
+            numbers={writableNumbers(numbers)}
+            value={createNumberId}
+            onChange={setNumberChoice}
+            label="Runs on WhatsApp number"
+          />
 
           {templates.length > 0 && (
             <div className="space-y-3">

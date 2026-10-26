@@ -121,6 +121,8 @@ interface MessageComposerProps {
   /** True when the member has view-only access to this conversation's
    *  WhatsApp number (migration 059). */
   numberReadOnly?: boolean;
+  /** Conversation's WhatsApp number: quick replies are per number (061). */
+  whatsappNumberId?: string | null;
 }
 
 function formatDuration(seconds: number): string {
@@ -144,6 +146,7 @@ export function MessageComposer({
   replyTo,
   onClearReply,
   numberReadOnly = false,
+  whatsappNumberId = null,
 }: MessageComposerProps) {
   const t = useTranslations("Inbox.composer");
 
@@ -343,6 +346,7 @@ export function MessageComposer({
           title,
           kind: "interactive",
           interactive_payload: interactivePayload,
+          ...(whatsappNumberId ? { whatsapp_number_id: whatsappNumberId } : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -814,6 +818,7 @@ export function MessageComposer({
         open={quickReplyOpen}
         onOpenChange={setQuickReplyOpen}
         onPick={handlePickQuickReply}
+        whatsappNumberId={whatsappNumberId}
       />
     </div>
   );

@@ -315,6 +315,7 @@ async function findEntryFlow(
   accountId: string,
   message: ParsedInbound,
   isFirstInbound: boolean,
+  whatsappNumberId: string | null = null,
 ): Promise<FlowRow | null> {
   // Only text messages can match an entry trigger. Interactive replies
   // are responses to existing prompts; they never start a new flow.
@@ -323,12 +324,29 @@ async function findEntryFlow(
   // Pull all active flows for this account. Active set is bounded
   // (the builder discourages double-trigger overlap; partial index
   // makes the lookup index-supported).
-  const { data: flows, error } = await db
-    .from("flows")
-    .select("*")
-    .eq("account_id", accountId)
-    .eq("status", "active")
-    .order("created_at", { ascending: true });
+  const baseQuery = () =>
+    db
+      .from("flows")
+      .select("*")
+      .eq("account_id", accountId)
+      .eq("status", "active");
+  // Flows are per WhatsApp number (migration 061): only this number's
+  // flows and unscoped ones may start.
+  let { data: flows, error } = whatsappNumberId
+    ? await baseQuery()
+        .or(`whatsapp_number_id.is.null,whatsapp_number_id.eq.${whatsappNumberId}`)
+        .order("created_at", { ascending: true })
+    : await baseQuery().order("created_at", { ascending: true });
+  if (
+    error &&
+    whatsappNumberId &&
+    (error.code === "42703" || error.code === "PGRST204")
+  ) {
+    // Migration 061 not applied yet: behave as before.
+    ({ data: flows, error } = await baseQuery().order("created_at", {
+      ascending: true,
+    }));
+  }
   if (error || !flows) return null;
 
   const typed = flows as FlowRow[];
@@ -872,6 +890,7 @@ export async function dispatchInboundToFlows(
       input.accountId,
       input.message,
       input.isFirstInboundMessage,
+      input.whatsappNumberId ?? null,
     );
     if (!flow || !flow.entry_node_id) {
       return { consumed: false, outcome: "no_match" };

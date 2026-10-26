@@ -743,6 +743,8 @@ export interface QuickReply {
   id: string;
   /** Account tenancy key — shared across all members of the account. */
   account_id: string;
+  /** WhatsApp number this reply belongs to (migration 061); null = all. */
+  whatsapp_number_id?: string | null;
   /** Author / audit only. */
   user_id: string;
   title: string;

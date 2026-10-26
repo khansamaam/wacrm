@@ -1,6 +1,12 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import type { AccountRole } from '@/lib/auth/roles'
+import { parseAutomationNumberId } from '@/lib/automations/number-scope'
+import {
+  assertNumberWriteAccess,
+  NumberWriteAccessError,
+} from '@/lib/whatsapp/number-access'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import { getFlowTemplate } from '@/lib/flows/templates'
 
@@ -49,8 +55,9 @@ export async function POST(request: Request) {
   // Creating a flow is a write — the RLS flows_insert policy requires
   // `agent`, but this route inserts via the service-role client which
   // bypasses RLS, so the role must be enforced here.
+  let role: AccountRole
   try {
-    await requireRole('agent')
+    role = (await requireRole('agent')).role
   } catch (err) {
     return toErrorResponse(err)
   }
@@ -90,6 +97,8 @@ export async function POST(request: Request) {
          * provided.
          */
         template_slug?: string
+        /** WhatsApp number the flow runs on (migration 061). */
+        whatsapp_number_id?: string | null
       }
     | null
   if (!body) {
@@ -97,6 +106,23 @@ export async function POST(request: Request) {
   }
 
   const admin = supabaseAdmin()
+
+  // Optional number scope; the service-role insert bypasses RLS, so the
+  // account and write-access checks happen here.
+  let numberScope: { whatsapp_number_id: string | null } | Record<string, never> = {}
+  if ('whatsapp_number_id' in body) {
+    const parsed = await parseAutomationNumberId(admin, accountId, body.whatsapp_number_id)
+    if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 })
+    try {
+      await assertNumberWriteAccess({ supabase, userId, accountId, role, numberId: parsed.value })
+    } catch (error) {
+      if (error instanceof NumberWriteAccessError) {
+        return NextResponse.json({ error: error.message }, { status: 403 })
+      }
+      throw error
+    }
+    numberScope = { whatsapp_number_id: parsed.value }
+  }
 
   // -------- Template clone path --------
   if (body.template_slug) {
@@ -118,6 +144,7 @@ export async function POST(request: Request) {
         trigger_type: template.trigger_type,
         trigger_config: template.trigger_config,
         entry_node_id: template.entry_node_id,
+        ...numberScope,
       })
       .select()
       .single()
@@ -166,6 +193,7 @@ export async function POST(request: Request) {
       status: 'draft',
       trigger_type,
       trigger_config: body.trigger_config ?? {},
+      ...numberScope,
     })
     .select()
     .single()

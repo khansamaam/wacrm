@@ -1170,6 +1170,7 @@ export function MessageThread({
         replyTo={replyTo}
         onClearReply={() => setReplyTo(null)}
         numberReadOnly={numberReadOnly}
+        whatsappNumberId={conversation.whatsapp_number_id ?? null}
       />
 
       <TemplatePicker

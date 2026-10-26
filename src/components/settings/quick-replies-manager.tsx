@@ -24,6 +24,13 @@ import {
   type InteractiveMessagePayload,
 } from "@/lib/whatsapp/interactive";
 import type { QuickReply, QuickReplyKind } from "@/types";
+import { useWhatsAppNumbers } from "@/hooks/use-whatsapp-numbers";
+import {
+  NumberScopeSelect,
+  defaultScopeNumberId,
+  matchesNumber,
+  writableNumbers,
+} from "@/components/whatsapp/number-scope-select";
 
 interface DraftState {
   id?: string;
@@ -47,6 +54,14 @@ export function QuickRepliesManager() {
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState<DraftState | null>(null);
   const [saving, setSaving] = useState(false);
+  // Quick replies are separate per WhatsApp number (migration 061).
+  const { numbers, selectedNumberId } = useWhatsAppNumbers();
+  const [numberChoice, setNumberChoice] = useState<string | null>(null);
+  const createNumberId =
+    numberChoice ?? defaultScopeNumberId(numbers, selectedNumberId);
+  const visibleItems = items.filter((qr) =>
+    matchesNumber(qr.whatsapp_number_id, selectedNumberId)
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -80,10 +95,15 @@ export function QuickRepliesManager() {
       toast.error("Give the quick reply a name.");
       return;
     }
-    const payload =
+    const base =
       draft.kind === "interactive"
         ? { title: draft.title, kind: "interactive", interactive_payload: draft.interactive_payload }
         : { title: draft.title, kind: "text", content_text: draft.content_text };
+    // The number is chosen when the reply is created.
+    const payload =
+      !draft.id && createNumberId
+        ? { ...base, whatsapp_number_id: createNumberId }
+        : base;
 
     setSaving(true);
     try {
@@ -108,7 +128,7 @@ export function QuickRepliesManager() {
     } finally {
       setSaving(false);
     }
-  }, [draft, load]);
+  }, [draft, load, createNumberId]);
 
   const remove = useCallback(
     async (id: string) => {
@@ -140,13 +160,13 @@ export function QuickRepliesManager() {
         <div className="flex justify-center py-10">
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
         </div>
-      ) : items.length === 0 ? (
+      ) : visibleItems.length === 0 ? (
         <p className="rounded-lg border border-dashed border-border py-10 text-center text-sm text-muted-foreground">
           No quick replies yet. Create one to reuse it across conversations.
         </p>
       ) : (
         <ul className="flex flex-col gap-2">
-          {items.map((qr) => (
+          {visibleItems.map((qr) => (
             <li
               key={qr.id}
               className="flex items-start gap-3 rounded-lg border border-border bg-card p-3"
@@ -189,6 +209,14 @@ export function QuickRepliesManager() {
           </DialogHeader>
           {draft && (
             <div className="max-h-[70vh] space-y-3 overflow-y-auto">
+              {!draft.id && (
+                <NumberScopeSelect
+                  numbers={writableNumbers(numbers)}
+                  value={createNumberId}
+                  onChange={setNumberChoice}
+                  label="Available on WhatsApp number"
+                />
+              )}
               <div>
                 <label className="mb-1 block text-xs text-muted-foreground">Name</label>
                 <Input

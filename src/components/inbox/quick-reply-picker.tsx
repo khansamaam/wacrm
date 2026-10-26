@@ -17,6 +17,9 @@ interface QuickReplyPickerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onPick: (qr: QuickReply) => void;
+  /** Conversation's WhatsApp number: only its quick replies (and
+   *  unscoped ones) are offered (migration 061). */
+  whatsappNumberId?: string | null;
 }
 
 /**
@@ -28,6 +31,7 @@ export function QuickReplyPicker({
   open,
   onOpenChange,
   onPick,
+  whatsappNumberId = null,
 }: QuickReplyPickerProps) {
   const t = useTranslations("Inbox.composer");
   const [items, setItems] = useState<QuickReply[]>([]);
@@ -39,7 +43,12 @@ export function QuickReplyPicker({
     setLoading(true);
     void (async () => {
       try {
-        const res = await fetch("/api/quick-replies", { cache: "no-store" });
+        const query = whatsappNumberId
+          ? `?whatsapp_number_id=${encodeURIComponent(whatsappNumberId)}`
+          : "";
+        const res = await fetch(`/api/quick-replies${query}`, {
+          cache: "no-store",
+        });
         const data = await res.json().catch(() => ({}));
         if (!cancelled && res.ok) {
           setItems((data.quick_replies as QuickReply[]) ?? []);
@@ -51,7 +60,7 @@ export function QuickReplyPicker({
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, whatsappNumberId]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

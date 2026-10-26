@@ -2,6 +2,38 @@ import { NextResponse } from 'next/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive'
+import type { AccountContext } from '@/lib/auth/account'
+import {
+  assertNumberWriteAccess,
+  NumberWriteAccessError,
+} from '@/lib/whatsapp/number-access'
+
+/** 404 / 403 response when the row is missing or its number is
+ *  view-only for the caller (migration 061); null when allowed. */
+async function guardQuickReply(
+  ctx: AccountContext,
+  id: string,
+): Promise<NextResponse | null> {
+  const { data: row } = await supabaseAdmin()
+    .from('quick_replies')
+    .select('*')
+    .eq('id', id)
+    .eq('account_id', ctx.accountId)
+    .maybeSingle()
+  if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  try {
+    await assertNumberWriteAccess({
+      ...ctx,
+      numberId: (row.whatsapp_number_id as string | null | undefined) ?? null,
+    })
+  } catch (error) {
+    if (error instanceof NumberWriteAccessError) {
+      return NextResponse.json({ error: error.message }, { status: 403 })
+    }
+    throw error
+  }
+  return null
+}
 
 // Update / delete a single quick reply. Quick replies are account-
 // shared, so every mutation is scoped by `account_id` (the service-role
@@ -72,6 +104,9 @@ export async function PATCH(
     return NextResponse.json({ ok: true })
   }
 
+  const denied = await guardQuickReply(ctx, id)
+  if (denied) return denied
+
   const { error } = await supabaseAdmin()
     .from('quick_replies')
     .update(update)
@@ -92,6 +127,9 @@ export async function DELETE(
   } catch (err) {
     return toErrorResponse(err)
   }
+
+  const denied = await guardQuickReply(ctx, id)
+  if (denied) return denied
 
   const { error } = await supabaseAdmin()
     .from('quick_replies')

@@ -1026,6 +1026,7 @@ async function processMessage(
     userId: configOwnerUserId,
     contactId: contactRecord.id,
     conversationId: conversation.id,
+    whatsappNumberId,
     message:
       interactiveReplyId
         ? {
