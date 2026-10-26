@@ -596,14 +596,42 @@ export function TemplateManager() {
   const headerNeedsMedia =
     form.header_format !== 'none' && form.header_format !== 'text';
 
-  async function handleHeaderImageFile(file: File) {
-    if (!['image/jpeg', 'image/png'].includes(file.type)) {
-      toast.error(t('toastInvalidImage'));
+  // Upload rules per header format. The chat-media bucket caps files at
+  // 16 MB, within Meta's sample limits for video and document.
+  const HEADER_UPLOAD_RULES = {
+    image: { types: ['image/jpeg', 'image/png'], maxBytes: MEDIA_MAX_BYTES_BY_KIND.image, accept: 'image/jpeg,image/png' },
+    video: { types: ['video/mp4', 'video/3gpp'], maxBytes: MEDIA_MAX_BYTES_BY_KIND.video, accept: 'video/mp4,video/3gpp' },
+    document: { types: ['application/pdf'], maxBytes: MEDIA_MAX_BYTES_BY_KIND.document, accept: 'application/pdf' },
+  } as const;
+  const headerUploadRule =
+    form.header_format === 'image' ||
+    form.header_format === 'video' ||
+    form.header_format === 'document'
+      ? HEADER_UPLOAD_RULES[form.header_format]
+      : null;
+
+  async function handleHeaderFile(file: File) {
+    const format = form.header_format;
+    if (format !== 'image' && format !== 'video' && format !== 'document') return;
+    const rule = HEADER_UPLOAD_RULES[format];
+    if (!(rule.types as readonly string[]).includes(file.type)) {
+      toast.error(
+        format === 'image'
+          ? t('toastInvalidImage')
+          : format === 'video'
+            ? t('toastInvalidVideo')
+            : t('toastInvalidDocument'),
+      );
       return;
     }
-    if (file.size > MEDIA_MAX_BYTES_BY_KIND.image) {
+    if (file.size > rule.maxBytes) {
       toast.error(
-        t('toastImageTooLarge', { size: (file.size / 1024 / 1024).toFixed(1) }),
+        format === 'image'
+          ? t('toastImageTooLarge', { size: (file.size / 1024 / 1024).toFixed(1) })
+          : t('toastFileTooLarge', {
+              size: (file.size / 1024 / 1024).toFixed(1),
+              limit: Math.round(rule.maxBytes / 1024 / 1024),
+            }),
       );
       return;
     }
@@ -611,7 +639,7 @@ export function TemplateManager() {
     try {
       const { publicUrl } = await uploadAccountMedia('chat-media', file);
       setForm((f) => ({ ...f, header_media_url: publicUrl }));
-      toast.success(t('toastUploadSuccess'));
+      toast.success(format === 'image' ? t('toastUploadSuccess') : t('toastFileUploaded'));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t('toastUploadFailed'));
     } finally {
@@ -980,16 +1008,16 @@ export function TemplateManager() {
 
               {headerNeedsMedia && (
                 <div className="space-y-2 mt-2">
-                  {form.header_format === 'image' && (
+                  {headerUploadRule && (
                     <div className="flex items-center gap-2">
                       <input
                         ref={headerFileRef}
                         type="file"
-                        accept="image/jpeg,image/png"
+                        accept={headerUploadRule.accept}
                         className="hidden"
                         onChange={(e) => {
                           const f = e.target.files?.[0];
-                          if (f) void handleHeaderImageFile(f);
+                          if (f) void handleHeaderFile(f);
                           e.target.value = '';
                         }}
                       />
@@ -1005,10 +1033,18 @@ export function TemplateManager() {
                         ) : (
                           <Upload className="h-3.5 w-3.5" />
                         )}
-                        {t('uploadImage')}
+                        {form.header_format === 'image'
+                          ? t('uploadImage')
+                          : form.header_format === 'video'
+                            ? t('uploadVideo')
+                            : t('uploadDocument')}
                       </Button>
                       <span className="text-[11px] text-muted-foreground">
-                        {t('uploadHint')}
+                        {form.header_format === 'image'
+                          ? t('uploadHint')
+                          : form.header_format === 'video'
+                            ? t('uploadHintVideo')
+                            : t('uploadHintDocument')}
                       </span>
                     </div>
                   )}
@@ -1023,6 +1059,16 @@ export function TemplateManager() {
                     }
                     className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
                   />
+                  {form.header_format === 'document' && form.header_media_url && (
+                    <a
+                      href={normalizeMediaUrl(form.header_media_url)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-primary inline-block text-xs underline underline-offset-2"
+                    >
+                      {t('viewSampleDocument')}
+                    </a>
+                  )}
                   {form.header_format === 'image' && form.header_media_url && (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img

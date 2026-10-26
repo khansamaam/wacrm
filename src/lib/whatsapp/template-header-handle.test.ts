@@ -5,7 +5,11 @@ vi.mock('./meta-api', () => ({
   uploadResumableMedia: vi.fn(async () => ({ handle: 'HANDLE123' })),
 }));
 
-import { ensureImageHeaderHandle } from './template-header-handle';
+import {
+  ensureImageHeaderHandle,
+  ensureMediaHeaderHandle,
+  resolveSampleContentType,
+} from './template-header-handle';
 import { uploadResumableMedia } from './meta-api';
 import type { TemplatePayload } from './template-validators';
 
@@ -89,3 +93,51 @@ describe('ensureImageHeaderHandle', () => {
     await expect(ensureImageHeaderHandle(payload(), 'tok')).rejects.toThrow(/5 MB/);
   });
 });
+
+describe('ensureMediaHeaderHandle — document and video headers', () => {
+  function fileResponse(type: string, size = 2048) {
+    return new Response(new Uint8Array(size), { status: 200, headers: { 'content-type': type } })
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it('uploads a PDF document sample and attaches the handle', async () => {
+    vi.stubEnv('META_APP_ID', 'app-1');
+    vi.mocked(uploadResumableMedia).mockClear();
+    vi.stubGlobal('fetch', vi.fn(async () => fileResponse('application/pdf')));
+    const p = payload({ header_type: 'document', header_media_url: 'https://cdn.example.com/estimate.pdf' });
+    await ensureMediaHeaderHandle(p, 'tok');
+    expect(p.header_handle).toBe('HANDLE123');
+    expect(vi.mocked(uploadResumableMedia)).toHaveBeenCalledWith(
+      expect.objectContaining({ mimeType: 'application/pdf', fileName: 'header.pdf' }),
+    );
+  });
+
+  it('uploads a video sample', async () => {
+    vi.stubEnv('META_APP_ID', 'app-1');
+    vi.mocked(uploadResumableMedia).mockClear();
+    vi.stubGlobal('fetch', vi.fn(async () => fileResponse('video/mp4')));
+    const p = payload({ header_type: 'video', header_media_url: 'https://cdn.example.com/clip.mp4' });
+    await ensureMediaHeaderHandle(p, 'tok');
+    expect(vi.mocked(uploadResumableMedia)).toHaveBeenCalledWith(
+      expect.objectContaining({ mimeType: 'video/mp4', fileName: 'header.mp4' }),
+    );
+  });
+
+  it('treats a generic octet-stream PDF link as a PDF', async () => {
+    expect(resolveSampleContentType('document', 'application/octet-stream', 'https://x/estimate.pdf')).toBe('application/pdf')
+    expect(resolveSampleContentType('document', '', 'https://x/file')).toBe('application/pdf')
+  })
+
+  it('rejects a non-PDF document and an HTML page posing as a file', async () => {
+    expect(() => resolveSampleContentType('document', 'application/msword', 'https://x/a.doc')).toThrow(/PDF/)
+    expect(() => resolveSampleContentType('document', 'text/html', 'https://x/a.pdf')).toThrow(/PDF/)
+  })
+
+  it('accepts MP4 video samples', () => {
+    expect(resolveSampleContentType('video', 'video/mp4', 'https://x/v')).toBe('video/mp4')
+  })
+})

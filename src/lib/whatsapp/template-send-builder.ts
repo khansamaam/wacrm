@@ -79,7 +79,7 @@ type MetaSendParameter =
   | { type: 'text'; text: string }
   | { type: 'image'; image: { link?: string; id?: string } }
   | { type: 'video'; video: { link?: string; id?: string } }
-  | { type: 'document'; document: { link?: string; id?: string } }
+  | { type: 'document'; document: { link?: string; id?: string; filename?: string } }
   | { type: 'coupon_code'; coupon_code: string }
   | { type: 'payload'; payload: string };
 
@@ -136,9 +136,31 @@ function buildHeaderComponent(
         ? { type: 'image', image: mediaPayload }
         : headerType === 'video'
           ? { type: 'video', video: mediaPayload }
-          : { type: 'document', document: mediaPayload },
+          : {
+              type: 'document',
+              document: link && !id
+                ? { ...mediaPayload, filename: documentFilename(link) }
+                : mediaPayload,
+            },
     ],
   };
+}
+
+/**
+ * File name shown to the recipient for a document header: the link's last
+ * path segment when it looks like a file name, else "document.pdf".
+ * Without one WhatsApp shows the attachment as "Untitled".
+ */
+export function documentFilename(link: string): string {
+  try {
+    const segment = decodeURIComponent(
+      new URL(link).pathname.split('/').pop() ?? '',
+    ).trim();
+    if (/^[^/\\]{1,120}\.[a-z0-9]{2,5}$/i.test(segment)) return segment;
+  } catch {
+    // Not a URL — fall through.
+  }
+  return 'document.pdf';
 }
 
 function buildBodyComponent(

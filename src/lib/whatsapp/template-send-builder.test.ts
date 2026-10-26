@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSendComponents } from './template-send-builder';
+import { buildSendComponents, documentFilename } from './template-send-builder';
 import type { MessageTemplate } from '@/types';
 
 function row(overrides: Partial<MessageTemplate> = {}): MessageTemplate {
@@ -127,9 +127,18 @@ describe('buildSendComponents — header', () => {
     expect(components[0]).toEqual({
       type: 'header',
       parameters: [
-        { type: 'document', document: { link: 'https://x.com/doc.pdf' } },
+        {
+          type: 'document',
+          document: { link: 'https://x.com/doc.pdf', filename: 'doc.pdf' },
+        },
       ],
     });
+  });
+
+  it('names document headers after the linked file, with a safe fallback', () => {
+    expect(documentFilename('https://cdn.x.com/files/Bill%20Estimate.pdf')).toBe('Bill Estimate.pdf');
+    expect(documentFilename('https://cdn.x.com/download?id=7')).toBe('document.pdf');
+    expect(documentFilename('not a url')).toBe('document.pdf');
   });
 
   it('uses an explicit headerMediaId override as the media id', () => {
