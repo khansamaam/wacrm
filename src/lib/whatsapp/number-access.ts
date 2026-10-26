@@ -151,3 +151,71 @@ export async function assertNumberWriteAccess(args: {
   const levels = await loadMyNumberAccessLevels({ ...args, numberIds: [args.numberId] })
   if (levels.get(args.numberId) !== 'full') throw new NumberWriteAccessError()
 }
+
+/**
+ * What the caller may hand out to others (migration 065). Owners and
+ * "all numbers" members are unrestricted; everyone else may give each
+ * number up to the level they hold on it.
+ */
+export interface NumberGrantCeiling {
+  unrestricted: boolean
+  levels: Map<string, NumberAccessLevel>
+}
+
+export async function loadMyGrantCeiling(args: {
+  supabase: SupabaseClient
+  userId: string
+  accountId: string
+  role: AccountRole
+}): Promise<NumberGrantCeiling> {
+  const { supabase, userId, accountId, role } = args
+  const levels = new Map<string, NumberAccessLevel>()
+  if (role === 'owner') return { unrestricted: true, levels }
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('whatsapp_number_access_mode')
+    .eq('user_id', userId)
+    .eq('account_id', accountId)
+    .maybeSingle()
+  if ((profile?.whatsapp_number_access_mode ?? 'all') === 'all') {
+    return { unrestricted: true, levels }
+  }
+
+  const { data } = await supabase
+    .from('whatsapp_number_members')
+    .select('whatsapp_number_id, access_level')
+    .eq('user_id', userId)
+  for (const row of (data ?? []) as Array<{ whatsapp_number_id: string; access_level?: string }>) {
+    levels.set(row.whatsapp_number_id, row.access_level === 'view' ? 'view' : 'full')
+  }
+  return { unrestricted: false, levels }
+}
+
+const LEVEL_RANK: Record<NumberAccessLevel, number> = { view: 1, full: 2 }
+
+/**
+ * Null when the grant is within the caller's ceiling, else the reason.
+ * `existing` is what the member already has (when editing a member):
+ * keeping a level someone else granted is allowed, raising it is not.
+ */
+export function checkGrantCeiling(
+  ceiling: NumberGrantCeiling,
+  mode: 'all' | 'selected',
+  access: NumberAccessEntry[],
+  existing?: { mode: 'all' | 'selected'; levels: Map<string, NumberAccessLevel> },
+): string | null {
+  if (ceiling.unrestricted) return null
+  if (mode === 'all') {
+    if (existing?.mode === 'all') return null
+    return 'Only members with access to all WhatsApp numbers can grant access to all numbers'
+  }
+  for (const entry of access) {
+    const own = ceiling.levels.get(entry.id)
+    if (own && LEVEL_RANK[entry.level] <= LEVEL_RANK[own]) continue
+    const had = existing?.mode === 'all' ? 'full' : existing?.levels.get(entry.id)
+    if (had && LEVEL_RANK[entry.level] <= LEVEL_RANK[had]) continue
+    return 'You can only give access up to your own level on each WhatsApp number'
+  }
+  return null
+}

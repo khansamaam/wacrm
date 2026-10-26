@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import {
+  checkGrantCeiling,
   assertNumberWriteAccess,
   isMissingAccessLevelSupport,
   loadMyNumberAccessLevels,
@@ -122,5 +123,36 @@ describe('assertNumberWriteAccess', () => {
     await expect(
       assertNumberWriteAccess({ supabase: db({}), userId: 'u1', accountId: 'acct', role: 'viewer', numberId: null }),
     ).resolves.toBeUndefined()
+  })
+})
+
+describe('checkGrantCeiling', () => {
+  const limited = {
+    unrestricted: false,
+    levels: new Map<string, 'view' | 'full'>([
+      ['n800', 'full'],
+      ['nbfl', 'view'],
+    ]),
+  }
+
+  it('lets owners and all-numbers members grant anything', () => {
+    expect(checkGrantCeiling({ unrestricted: true, levels: new Map() }, 'all', [])).toBeNull()
+  })
+
+  it('caps a limited admin at their own level per number', () => {
+    expect(checkGrantCeiling(limited, 'selected', [{ id: 'n800', level: 'full' }])).toBeNull()
+    expect(checkGrantCeiling(limited, 'selected', [{ id: 'nbfl', level: 'view' }])).toBeNull()
+    expect(checkGrantCeiling(limited, 'selected', [{ id: 'nbfl', level: 'full' }])).toMatch(/own level/)
+    expect(checkGrantCeiling(limited, 'selected', [{ id: 'other', level: 'view' }])).toMatch(/own level/)
+  })
+
+  it('stops a limited admin from granting all numbers', () => {
+    expect(checkGrantCeiling(limited, 'all', [])).toMatch(/all numbers/)
+  })
+
+  it('allows keeping levels the member already had', () => {
+    const existing = { mode: 'selected' as const, levels: new Map([['nbfl', 'full' as const]]) }
+    expect(checkGrantCeiling(limited, 'selected', [{ id: 'nbfl', level: 'full' }], existing)).toBeNull()
+    expect(checkGrantCeiling(limited, 'all', [], { mode: 'all', levels: new Map() })).toBeNull()
   })
 })

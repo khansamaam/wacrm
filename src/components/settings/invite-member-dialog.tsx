@@ -53,6 +53,9 @@ interface InviteMemberDialogProps {
   /** Called after a successful create so the parent re-fetches the
    *  pending-invitations list. */
   onCreated: () => void;
+  /** False for an admin without access to every number (migration 065):
+   *  the invite must list numbers, each up to the admin's own level. */
+  canGrantAllNumbers?: boolean;
 }
 
 const EXPIRY_OPTIONS = [
@@ -79,6 +82,7 @@ export function InviteMemberDialog({
   open,
   onOpenChange,
   onCreated,
+  canGrantAllNumbers = true,
 }: InviteMemberDialogProps) {
   const t = useTranslations('Settings.invite');
   const tRoles = useTranslations('Settings.roles');
@@ -89,7 +93,8 @@ export function InviteMemberDialog({
   const [label, setLabel] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<CreatedInvite | null>(null);
-  const [numberAccessMode, setNumberAccessMode] = useState<'all' | 'selected'>('all');
+  const [chosenAccessMode, setNumberAccessMode] = useState<'all' | 'selected'>('all');
+  const numberAccessMode: 'all' | 'selected' = canGrantAllNumbers ? chosenAccessMode : 'selected';
   const [numberAccess, setNumberAccess] = useState<NumberAccessMap>({});
 
   function reset() {
@@ -305,12 +310,13 @@ export function InviteMemberDialog({
                 </p>
               </div>
 
-              {numbers.length > 1 && (
+              {(numbers.length > 1 || !canGrantAllNumbers) && (
                 <div className="space-y-2">
                   <Label>WhatsApp number access</Label>
                   <NumberAccessEditor
                     numbers={numbers}
                     mode={numberAccessMode}
+                    canGrantAll={canGrantAllNumbers}
                     onModeChange={setNumberAccessMode}
                     access={numberAccess}
                     onAccessChange={(id, level) =>

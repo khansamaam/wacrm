@@ -36,6 +36,8 @@ import { supabaseAdmin } from "@/lib/flows/admin-client";
 import {
   isMissingAccessLevelSupport,
   parseNumberAccessList,
+  checkGrantCeiling,
+  loadMyGrantCeiling,
 } from "@/lib/whatsapp/number-access";
 
 // Resolve the base URL we publish invite links under.
@@ -220,6 +222,22 @@ export async function POST(request: Request) {
     const numberIds = numberAccess.map((entry) => entry.id);
     if (accessMode === 'selected' && numberIds.length === 0) {
       return NextResponse.json({ error: 'Select at least one WhatsApp number' }, { status: 400 });
+    }
+    // An admin can't hand out more than they have (migration 065 enforces
+    // the same in the database for direct writes; this route writes with
+    // the service key, so it checks here).
+    const ceilingError = checkGrantCeiling(
+      await loadMyGrantCeiling({
+        supabase: ctx.supabase,
+        userId: ctx.userId,
+        accountId: ctx.accountId,
+        role: ctx.role,
+      }),
+      accessMode,
+      accessMode === 'selected' ? numberAccess : [],
+    );
+    if (ceilingError) {
+      return NextResponse.json({ error: ceilingError }, { status: 403 });
     }
     if (numberIds.length > 0) {
       const { count, error: numberError } = await admin

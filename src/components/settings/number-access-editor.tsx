@@ -12,6 +12,8 @@ import {
 export type NumberAccessChoice = 'none' | 'view' | 'full';
 export type NumberAccessMap = Record<string, NumberAccessChoice>;
 
+const CHOICE_RANK: Record<NumberAccessChoice, number> = { none: 0, view: 1, full: 2 };
+
 const CHOICE_LABEL: Record<NumberAccessChoice, string> = {
   none: 'No access',
   view: 'View only',
@@ -51,13 +53,32 @@ export function NumberAccessEditor({
   onModeChange,
   access,
   onAccessChange,
+  canGrantAll = true,
+  initialMode,
+  initialAccess,
 }: {
   numbers: WhatsAppNumber[];
   mode: 'all' | 'selected';
   onModeChange: (mode: 'all' | 'selected') => void;
   access: NumberAccessMap;
   onAccessChange: (numberId: string, level: NumberAccessChoice) => void;
+  /**
+   * False for an admin without access to every number: they can only give
+   * each number up to their own level (`my_access_level`), plus keep what
+   * the member already had (`initialMode` / `initialAccess`).
+   */
+  canGrantAll?: boolean;
+  initialMode?: 'all' | 'selected';
+  initialAccess?: NumberAccessMap;
 }) {
+  const allowAllMode = canGrantAll || initialMode === 'all';
+  const maxChoice = (number: WhatsAppNumber): number => {
+    if (canGrantAll) return CHOICE_RANK.full;
+    const own = CHOICE_RANK[number.my_access_level ?? 'none'];
+    const had =
+      initialMode === 'all' ? CHOICE_RANK.full : CHOICE_RANK[initialAccess?.[number.id] ?? 'none'];
+    return Math.max(own, had);
+  };
   return (
     <div className="space-y-2">
       <Select
@@ -74,7 +95,7 @@ export function NumberAccessEditor({
           </SelectValue>
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="all">
+          <SelectItem value="all" disabled={!allowAllMode}>
             Full access to all current and future numbers
           </SelectItem>
           <SelectItem value="selected">Choose access per number</SelectItem>
@@ -107,13 +128,22 @@ export function NumberAccessEditor({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">{CHOICE_LABEL.none}</SelectItem>
-                    <SelectItem value="view">{CHOICE_LABEL.view}</SelectItem>
-                    <SelectItem value="full">{CHOICE_LABEL.full}</SelectItem>
+                    <SelectItem value="view" disabled={maxChoice(number) < CHOICE_RANK.view}>
+                      {CHOICE_LABEL.view}
+                    </SelectItem>
+                    <SelectItem value="full" disabled={maxChoice(number) < CHOICE_RANK.full}>
+                      {CHOICE_LABEL.full}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             );
           })}
+          {!canGrantAll && (
+            <p className="text-muted-foreground p-3 text-xs">
+              You can give each number up to your own access level on it.
+            </p>
+          )}
           <p className="text-muted-foreground p-3 text-xs">
             View only: can read that number&apos;s chats, but cannot reply,
             assign, close or send broadcasts. The member&apos;s role still

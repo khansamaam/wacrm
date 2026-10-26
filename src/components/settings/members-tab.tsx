@@ -287,6 +287,11 @@ export function MembersTab() {
     }
   }
 
+  // Only Workspace Owners and "all numbers" members may hand out any level
+  // (migration 065); others are capped at their own level per number.
+  const canGrantAllNumbers =
+    members.find((member) => member.user_id === user?.id)?.whatsapp_number_access_mode === 'all';
+
   function openNumberAccess(member: Member) {
     setAccessMember(member);
     setAccessMode(member.whatsapp_number_access_mode || 'all');
@@ -631,6 +636,7 @@ export function MembersTab() {
         open={inviteOpen}
         onOpenChange={setInviteOpen}
         onCreated={loadEverything}
+        canGrantAllNumbers={canGrantAllNumbers}
       />
 
       <Dialog
@@ -691,6 +697,16 @@ export function MembersTab() {
               numbers={numbers}
               mode={accessMode}
               onModeChange={setAccessMode}
+              canGrantAll={canGrantAllNumbers}
+              initialMode={accessMember?.whatsapp_number_access_mode}
+              initialAccess={
+                accessMember
+                  ? accessMapFromList(
+                      accessMember.whatsapp_number_access,
+                      accessMember.whatsapp_number_ids
+                    )
+                  : undefined
+              }
               access={accessLevels}
               onAccessChange={(id, level) =>
                 setAccessLevels((current) => ({ ...current, [id]: level }))

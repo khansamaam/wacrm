@@ -42,6 +42,7 @@ beforeEach(() => {
   mocks.requireRole.mockResolvedValue({
     userId: 'user-1',
     accountId: 'account-1',
+    role: 'owner',
     supabase: { from: vi.fn() },
   });
   mocks.invitationSingle.mockResolvedValue({
