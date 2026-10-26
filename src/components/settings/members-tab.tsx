@@ -68,7 +68,7 @@ import { RequireRole } from '@/components/auth/require-role';
 import { useAuth } from '@/hooks/use-auth';
 import { usePresence } from '@/hooks/use-presence';
 import type { AccountRole } from '@/lib/auth/roles';
-import { presenceLabel, summarize } from '@/lib/presence';
+import { formatLastSeen, presenceLabel, summarize } from '@/lib/presence';
 import {
   PRESENCE_DOT_CLASS,
   PresenceDot,
@@ -115,6 +115,13 @@ const EDITABLE_ROLES: { value: AccountRole }[] = [
 // ROLE_META module so this roster and the Overview identity chip can't
 // drift. The colour scale runs amber (owner — scarce, immutable) →
 // primary (admin) → muted (agent / viewer).
+
+function fmtDateTime(iso: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(iso));
+}
 
 function fmtDate(iso: string): string {
   // Match the rest of the dashboard's locale-light formatting.
@@ -457,6 +464,27 @@ export function MembersTab() {
                           {member.email}
                         </p>
                       )}
+                      {/* Last activity in the app, from the presence
+                          heartbeat (every ~30s while a tab is open).
+                          Hover shows the exact time. */}
+                      <p
+                        className="truncate text-[11px] text-muted-foreground"
+                        title={
+                          presenceRow?.last_seen_at
+                            ? fmtDateTime(presenceRow.last_seen_at)
+                            : undefined
+                        }
+                      >
+                        {presence === 'online' ? (
+                          <span className="text-emerald-600">Active now</span>
+                        ) : presence === 'away' ? (
+                          'Away (idle) · tab open'
+                        ) : presenceRow?.last_seen_at ? (
+                          `Last seen ${formatLastSeen(presenceRow.last_seen_at, now)}`
+                        ) : (
+                          'Not seen yet'
+                        )}
+                      </p>
                     </div>
                   </div>
 
