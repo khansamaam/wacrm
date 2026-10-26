@@ -39,7 +39,11 @@ import {
 import { useTranslations } from 'next-intl';
 import { useAuth } from '@/hooks/use-auth';
 import { useWhatsAppNumbers } from '@/hooks/use-whatsapp-numbers';
-import { Checkbox } from '@/components/ui/checkbox';
+import {
+  NumberAccessEditor,
+  accessListFromMap,
+  type NumberAccessMap,
+} from './number-access-editor';
 
 type InviteRole = 'admin' | 'agent' | 'viewer';
 
@@ -86,7 +90,7 @@ export function InviteMemberDialog({
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<CreatedInvite | null>(null);
   const [numberAccessMode, setNumberAccessMode] = useState<'all' | 'selected'>('all');
-  const [selectedNumberIds, setSelectedNumberIds] = useState<string[]>([]);
+  const [numberAccess, setNumberAccess] = useState<NumberAccessMap>({});
 
   function reset() {
     setRole('agent');
@@ -95,7 +99,7 @@ export function InviteMemberDialog({
     setResult(null);
     setSubmitting(false);
     setNumberAccessMode('all');
-    setSelectedNumberIds([]);
+    setNumberAccess({});
   }
 
   async function handleCreate() {
@@ -110,8 +114,9 @@ export function InviteMemberDialog({
       toast.error(t('labelTooLong', { max: MAX_LABEL_LEN }));
       return;
     }
-    if (numberAccessMode === 'selected' && selectedNumberIds.length === 0) {
-      toast.error('Select at least one WhatsApp number');
+    const accessList = accessListFromMap(numberAccess);
+    if (numberAccessMode === 'selected' && accessList.length === 0) {
+      toast.error('Give access to at least one WhatsApp number');
       return;
     }
     setSubmitting(true);
@@ -124,7 +129,7 @@ export function InviteMemberDialog({
           expiresInDays: Number(expiry),
           label: trimmedLabel || undefined,
           whatsappNumberAccessMode: numberAccessMode,
-          whatsappNumberIds: numberAccessMode === 'selected' ? selectedNumberIds : [],
+          whatsappNumberAccess: numberAccessMode === 'selected' ? accessList : [],
         }),
       });
 
@@ -303,29 +308,15 @@ export function InviteMemberDialog({
               {numbers.length > 1 && (
                 <div className="space-y-2">
                   <Label>WhatsApp number access</Label>
-                  <Select value={numberAccessMode} onValueChange={(value) => value && setNumberAccessMode(value as 'all' | 'selected')}>
-                    <SelectTrigger className="w-full bg-muted border-border"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All current and future numbers</SelectItem>
-                      <SelectItem value="selected">Selected numbers only</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  {numberAccessMode === 'selected' && (
-                    <div className="space-y-2 rounded-lg border p-3">
-                      {numbers.map((number) => (
-                        <label key={number.id} className="flex cursor-pointer items-center gap-2 text-sm">
-                          <Checkbox
-                            checked={selectedNumberIds.includes(number.id)}
-                            onCheckedChange={(checked) => setSelectedNumberIds((current) =>
-                              checked ? [...new Set([...current, number.id])] : current.filter((id) => id !== number.id)
-                            )}
-                          />
-                          <span>{number.label}</span>
-                          <span className="text-muted-foreground">{number.display_phone_number || number.phone_number_id}</span>
-                        </label>
-                      ))}
-                    </div>
-                  )}
+                  <NumberAccessEditor
+                    numbers={numbers}
+                    mode={numberAccessMode}
+                    onModeChange={setNumberAccessMode}
+                    access={numberAccess}
+                    onAccessChange={(id, level) =>
+                      setNumberAccess((current) => ({ ...current, [id]: level }))
+                    }
+                  />
                 </div>
               )}
 

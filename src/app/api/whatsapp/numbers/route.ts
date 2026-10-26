@@ -9,15 +9,17 @@ import {
 } from '@/lib/whatsapp/meta-api'
 import {
   SERVER_NUMBER_COLUMNS,
+  insertWhatsAppNumberRow,
   sanitizeWhatsAppNumber,
   type WhatsAppNumberRow,
 } from '@/lib/whatsapp/numbers'
+import { loadMyNumberAccessLevels } from '@/lib/whatsapp/number-access'
 
 const MAX_LABEL_LENGTH = 80
 
 export async function GET() {
   try {
-    const { supabase, accountId } = await requireRole('viewer')
+    const { supabase, accountId, userId, role } = await requireRole('viewer')
     const { data, error } = await supabase
       .from('whatsapp_numbers')
       .select(SERVER_NUMBER_COLUMNS)
@@ -30,11 +32,23 @@ export async function GET() {
       return NextResponse.json({ error: 'Failed to load WhatsApp numbers' }, { status: 500 })
     }
 
+    const rows = (data ?? []) as unknown as WhatsAppNumberRow[]
+    // The caller's own level per number, so the UI can lock the composer
+    // on view-only numbers. RLS already hides numbers without access.
+    const levels = await loadMyNumberAccessLevels({
+      supabase,
+      userId,
+      accountId,
+      role,
+      numberIds: rows.map((row) => row.id),
+    })
+
     return NextResponse.json(
       {
-        numbers: (data ?? []).map((row) =>
-          sanitizeWhatsAppNumber(row as unknown as WhatsAppNumberRow),
-        ),
+        numbers: rows.map((row) => ({
+          ...sanitizeWhatsAppNumber(row),
+          my_access_level: levels.get(row.id) ?? 'view',
+        })),
       },
       { headers: { 'Cache-Control': 'private, no-store' } },
     )
@@ -176,9 +190,7 @@ export async function POST(request: Request) {
     }
 
     const now = new Date().toISOString()
-    const { data, error } = await supabase
-      .from('whatsapp_numbers')
-      .insert({
+    const { data, error } = await insertWhatsAppNumberRow(supabase, {
         account_id: accountId,
         created_by_user_id: userId,
         label,
@@ -198,8 +210,6 @@ export async function POST(request: Request) {
         subscribed_apps_at: subscribedAppsAt,
         last_registration_error: registrationError,
       })
-      .select(SERVER_NUMBER_COLUMNS)
-      .single()
 
     if (error) {
       if (error.code === '23505') {

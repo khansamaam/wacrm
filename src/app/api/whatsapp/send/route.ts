@@ -11,6 +11,11 @@ import {
   SendMessageError,
 } from '@/lib/whatsapp/send-message'
 import { resolveWhatsAppNumber, WhatsAppNumberError } from '@/lib/whatsapp/numbers'
+import {
+  assertNumberWriteAccess,
+  NumberWriteAccessError,
+} from '@/lib/whatsapp/number-access'
+import { isAccountRole } from '@/lib/auth/roles'
 
 // The dashboard's outbound-send endpoint. It owns auth, per-user rate
 // limiting, and the two ways the UI targets a thread — an existing
@@ -50,10 +55,13 @@ export async function POST(request: Request) {
     // returned nothing for teammates who didn't author the row.
     const { data: profile } = await supabase
       .from('profiles')
-      .select('account_id')
+      .select('account_id, account_role')
       .eq('user_id', user.id)
       .maybeSingle()
     const accountId = profile?.account_id as string | undefined
+    const accountRole = isAccountRole(profile?.account_role)
+      ? profile.account_role
+      : 'viewer'
     if (!accountId) {
       return NextResponse.json(
         { error: 'Your profile is not linked to an account.' },
@@ -114,11 +122,12 @@ export async function POST(request: Request) {
     // contact so a business-initiated template send (Contact detail view)
     // reuses the shared send core below.
     let conversationId: string | null = null
+    let conversationNumberId: string | null = null
 
     if (conversationIdInput) {
       const { data, error: convError } = await supabase
         .from('conversations')
-        .select('id')
+        .select('id, whatsapp_number_id')
         .eq('id', conversationIdInput)
         .eq('account_id', accountId)
         .single()
@@ -130,6 +139,7 @@ export async function POST(request: Request) {
         )
       }
       conversationId = data.id
+      conversationNumberId = (data.whatsapp_number_id as string | null) ?? null
     } else {
       // contact_id path: verify the contact is in this account first so a
       // caller can't open a conversation against someone else's contact.
@@ -164,6 +174,22 @@ export async function POST(request: Request) {
         throw error
       }
 
+      conversationNumberId = selectedNumberId
+      try {
+        await assertNumberWriteAccess({
+          supabase,
+          userId: user.id,
+          accountId,
+          role: accountRole,
+          numberId: selectedNumberId,
+        })
+      } catch (error) {
+        if (error instanceof NumberWriteAccessError) {
+          return NextResponse.json({ error: error.message }, { status: 403 })
+        }
+        throw error
+      }
+
       const resolved = await findOrCreateConversation(
         supabase,
         accountId,
@@ -185,6 +211,23 @@ export async function POST(request: Request) {
         { error: 'Conversation not found' },
         { status: 404 }
       )
+    }
+
+    // Per-number access level (migration 059): view-only members and
+    // workspace viewers may read this number's chats but not send.
+    try {
+      await assertNumberWriteAccess({
+        supabase,
+        userId: user.id,
+        accountId,
+        role: accountRole,
+        numberId: conversationNumberId,
+      })
+    } catch (error) {
+      if (error instanceof NumberWriteAccessError) {
+        return NextResponse.json({ error: error.message }, { status: 403 })
+      }
+      throw error
     }
 
     // Delegate to the shared send core (validates, sends to Meta with

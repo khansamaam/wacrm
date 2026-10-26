@@ -29,10 +29,16 @@ export default function NewBroadcastPage() {
   const { accountId } = useAuth();
   const { createAndSendBroadcast, isProcessing, progress } =
     useBroadcastSending();
-  const { numbers, selectedNumberId, setSelectedNumberId } =
+  const { numbers: allNumbers, selectedNumberId, setSelectedNumberId } =
     useWhatsAppNumbers();
+  // Only numbers the member may send from (view-only numbers are excluded).
+  const numbers = allNumbers.filter(
+    (number) => number.my_access_level !== 'view'
+  );
   const sendingNumberId =
-    selectedNumberId ??
+    (selectedNumberId && numbers.some((number) => number.id === selectedNumberId)
+      ? selectedNumberId
+      : null) ??
     numbers.find((number) => number.is_default)?.id ??
     numbers[0]?.id ??
     '';

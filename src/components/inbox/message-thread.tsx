@@ -64,6 +64,9 @@ interface ReplyDraft {
 }
 
 interface MessageThreadProps {
+  /** View-only access to this conversation's WhatsApp number: the thread
+   *  can be read but not replied to, assigned or closed. */
+  numberReadOnly?: boolean;
   conversation: Conversation | null;
   contact: Contact | null;
   messages: Message[];
@@ -165,6 +168,7 @@ export function MessageThread({
   onRefresh,
   contactPanelOpen,
   onToggleContactPanel,
+  numberReadOnly = false,
 }: MessageThreadProps) {
   const t = useTranslations("Inbox.messageThread");
   const tTimer = useTranslations("Inbox.sessionTimer");
@@ -965,9 +969,12 @@ export function MessageThread({
 
           {/* Status dropdown */}
           <DropdownMenu>
-            <DropdownMenuTrigger className={cn(
+            <DropdownMenuTrigger
+                disabled={numberReadOnly}
+                className={cn(
                   "inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
-                  currentStatus?.color ?? "text-muted-foreground"
+                  currentStatus?.color ?? "text-muted-foreground",
+                  numberReadOnly && "cursor-not-allowed opacity-60"
                 )}>
                 {currentStatus ? t(`status${currentStatus.label}`) : t("status")}
                 <ChevronDown className="h-3 w-3" />
@@ -991,9 +998,11 @@ export function MessageThread({
           {/* Assign dropdown */}
           <DropdownMenu>
             <DropdownMenuTrigger
+              disabled={numberReadOnly}
               className={cn(
                 "inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
-                assignedAgentId ? "text-primary" : "text-muted-foreground"
+                assignedAgentId ? "text-primary" : "text-muted-foreground",
+                numberReadOnly && "cursor-not-allowed opacity-60"
               )}
             >
               <UserPlus className="h-3 w-3" />
@@ -1157,6 +1166,7 @@ export function MessageThread({
         onOpenTemplates={handleOpenTemplates}
         replyTo={replyTo}
         onClearReply={() => setReplyTo(null)}
+        numberReadOnly={numberReadOnly}
       />
 
       <TemplatePicker

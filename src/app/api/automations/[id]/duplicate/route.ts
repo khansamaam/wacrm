@@ -45,6 +45,11 @@ export async function POST(
       trigger_type: original.trigger_type,
       trigger_config: original.trigger_config,
       is_active: false,
+      // Keep the copy on the same WhatsApp number (present once
+      // migration 058 is applied).
+      ...('whatsapp_number_id' in original
+        ? { whatsapp_number_id: original.whatsapp_number_id }
+        : {}),
     })
     .select()
     .single();

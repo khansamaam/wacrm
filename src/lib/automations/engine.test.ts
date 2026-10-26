@@ -12,6 +12,9 @@ const h = vi.hoisted(() => ({
     updateCalls: [] as { table: string; filters: [string, string, unknown][] }[],
     upsertCalls: [] as { table: string; payload: unknown }[],
     logUpdates: [] as Record<string, unknown>[],
+    orFilters: [] as string[],
+    automationsMissingColumn: false,
+    conversationNumber: null as { whatsapp_number_id: string | null } | null,
   },
 }));
 
@@ -23,8 +26,12 @@ vi.mock("./admin-client", () => {
     type: string;
     payload?: unknown;
     filters: [string, string, unknown][];
+    or?: string;
   }) {
     const { table, type } = ops;
+    if (table === "conversations" && type === "select") {
+      return { data: state.conversationNumber, error: null };
+    }
     if (table === "contacts") {
       if (type === "update") {
         state.updateCalls.push({ table, filters: ops.filters });
@@ -44,7 +51,15 @@ vi.mock("./admin-client", () => {
       }
       return { data: null, error: null };
     }
-    if (table === "automations") return { data: state.automations, error: null };
+    if (table === "automations") {
+      if (ops.or) {
+        state.orFilters.push(ops.or);
+        if (state.automationsMissingColumn) {
+          return { data: null, error: { code: "42703", message: "column automations.whatsapp_number_id does not exist" } };
+        }
+      }
+      return { data: state.automations, error: null };
+    }
     if (table === "automation_logs") {
       if (type === "insert") return { data: { id: "log1" }, error: null };
       if (type === "update") {
@@ -63,8 +78,10 @@ vi.mock("./admin-client", () => {
       type: "select",
       payload: undefined as unknown,
       filters: [] as [string, string, unknown][],
+      or: undefined as string | undefined,
     };
     const b: Record<string, unknown> = {
+      or: (f: string) => ((ops.or = f), b),
       select: () => b,
       insert: (p: unknown) => ((ops.type = "insert"), (ops.payload = p), b),
       update: (p: unknown) => ((ops.type = "update"), (ops.payload = p), b),
@@ -114,6 +131,78 @@ beforeEach(() => {
   h.state.updateCalls = [];
   h.state.upsertCalls = [];
   h.state.logUpdates = [];
+  h.state.orFilters = [];
+  h.state.automationsMissingColumn = false;
+  h.state.conversationNumber = null;
+});
+
+describe("runAutomationsForTrigger — WhatsApp number scope", () => {
+  it("only loads automations for the event's number (or for all numbers)", async () => {
+    h.state.owned = { id: "c1" };
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "keyword_match",
+      contactId: "c1",
+      whatsappNumberId: "num-2",
+      context: { message_text: "hi" },
+    });
+    expect(h.state.orFilters).toEqual([
+      "whatsapp_number_id.is.null,whatsapp_number_id.eq.num-2",
+    ]);
+  });
+
+  it("derives the number from the conversation when not given", async () => {
+    h.state.owned = { id: "c1" };
+    h.state.conversationNumber = { whatsapp_number_id: "num-9" };
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "tag_added",
+      contactId: "c1",
+      context: { conversation_id: "conv-1", tag_id: "t1" },
+    });
+    expect(h.state.orFilters).toEqual([
+      "whatsapp_number_id.is.null,whatsapp_number_id.eq.num-9",
+    ]);
+  });
+
+  it("applies no number filter when there is no number context", async () => {
+    h.state.owned = { id: "c1" };
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "tag_added",
+      contactId: "c1",
+      context: { tag_id: "t1" },
+    });
+    expect(h.state.orFilters).toEqual([]);
+    expect(h.state.fromCalls).toContain("automations");
+  });
+
+  it("falls back to the unscoped query when migration 058 is not applied", async () => {
+    h.state.owned = { id: "c1" };
+    h.state.automationsMissingColumn = true;
+    h.state.automations = [
+      {
+        id: "a1",
+        account_id: ACCOUNT,
+        user_id: "u1",
+        name: "kw",
+        trigger_type: "keyword_match",
+        trigger_config: { keywords: ["book"], match_type: "contains" },
+        is_active: true,
+        execution_count: 0,
+      },
+    ];
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "keyword_match",
+      contactId: "c1",
+      whatsappNumberId: "num-2",
+      context: { message_text: "book now" },
+    });
+    // The scoped query failed, the plain one ran and executed the automation.
+    expect(h.state.orFilters).toHaveLength(1);
+    expect(h.state.fromCalls).toContain("automation_logs");
+  });
 });
 
 describe("runAutomationsForTrigger — tenant isolation", () => {

@@ -1,7 +1,18 @@
 import { NextResponse } from 'next/server';
 
 import { requireRole, toErrorResponse } from '@/lib/auth/account';
+import {
+  isMissingAccessLevelSupport,
+  parseNumberAccessList,
+} from '@/lib/whatsapp/number-access';
 
+/**
+ * Update a member's WhatsApp number access.
+ *
+ * Body: `{ access_mode: 'all' | 'selected', numbers?: [{ id, level }] }`
+ * where level is 'view' or 'full'. The legacy `whatsapp_number_ids` array
+ * (every id = full access) is still accepted.
+ */
 export async function PATCH(
   request: Request,
   context: { params: Promise<{ userId: string }> }
@@ -11,38 +22,52 @@ export async function PATCH(
     const { supabase } = await requireRole('admin');
     const body = (await request.json().catch(() => null)) as {
       access_mode?: unknown;
+      numbers?: unknown;
       whatsapp_number_ids?: unknown;
     } | null;
     const mode = body?.access_mode;
-    const ids = body?.whatsapp_number_ids;
-    if (
-      (mode !== 'all' && mode !== 'selected') ||
-      !Array.isArray(ids) ||
-      !ids.every((value) => typeof value === 'string')
-    ) {
+    const access = parseNumberAccessList(body?.numbers, body?.whatsapp_number_ids ?? []);
+    if ((mode !== 'all' && mode !== 'selected') || !access) {
       return NextResponse.json(
         {
           error:
-            'access_mode must be all or selected and whatsapp_number_ids must be an array',
+            'access_mode must be all or selected, and numbers must be a list of { id, level } with level view or full',
         },
         { status: 400 }
       );
     }
-    if (mode === 'selected' && ids.length === 0) {
+    if (mode === 'selected' && access.length === 0) {
       return NextResponse.json(
-        { error: 'Select at least one WhatsApp number' },
+        { error: 'Give access to at least one WhatsApp number' },
         { status: 400 }
       );
     }
 
-    const { error } = await supabase.rpc('set_member_whatsapp_number_access', {
+    let { error } = await supabase.rpc('set_member_whatsapp_number_access_levels', {
       p_user_id: userId,
       p_access_mode: mode,
-      p_whatsapp_number_ids: ids,
+      p_numbers: access,
     });
+    if (error && isMissingAccessLevelSupport(error)) {
+      // Migration 059 not applied yet: levels cannot be stored, so only
+      // full access is possible. Refuse rather than silently upgrade a
+      // requested view-only assignment to full access.
+      if (access.some((entry) => entry.level === 'view')) {
+        return NextResponse.json(
+          { error: 'View-only access needs database migration 059 to be applied' },
+          { status: 409 }
+        );
+      }
+      ({ error } = await supabase.rpc('set_member_whatsapp_number_access', {
+        p_user_id: userId,
+        p_access_mode: mode,
+        p_whatsapp_number_ids: access.map((entry) => entry.id),
+      }));
+    }
     if (error) {
       console.error('[member number access] update failed:', error);
-      return NextResponse.json({ error: error.message }, { status: 400 });
+      const status = error.code === '42501' ? 403 : 400;
+      return NextResponse.json({ error: error.message }, { status });
     }
     return NextResponse.json({ success: true });
   } catch (error) {

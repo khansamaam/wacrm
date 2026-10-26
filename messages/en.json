@@ -1015,6 +1015,11 @@
         "matchContains": "Contains",
         "matchExact": "Exact",
         "closeConversationHint": "Sets the conversation status to \"closed\". No configuration needed."
+      },
+      "numberScope": {
+        "label": "Runs on WhatsApp number",
+        "all": "All numbers",
+        "hint": "Only messages to this number trigger the automation, and replies are sent from it."
       }
     }
   },

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 /** Database row shape used only by trusted server-side WhatsApp services. */
@@ -245,4 +246,35 @@ export function sanitizeWhatsAppNumber(
     ...safe,
     has_meta_app_secret: Boolean(metaAppSecret),
   }
+}
+
+/**
+ * Insert a whatsapp_numbers row and read it back.
+ *
+ * `INSERT … RETURNING` cannot be used here: RETURNING is checked against the
+ * SELECT policy `has_whatsapp_number_access(id)` (migration 048), and that
+ * SECURITY DEFINER function cannot yet see the row being inserted, so
+ * PostgREST reports 42501 "new row violates row-level security policy".
+ * Inserting with a pre-generated id and selecting afterwards avoids that.
+ */
+export async function insertWhatsAppNumberRow(
+  supabase: SupabaseClient,
+  values: Record<string, unknown>,
+): Promise<{
+  data: WhatsAppNumberRow | null
+  error: { code?: string; message: string } | null
+}> {
+  const id = randomUUID()
+  const { error } = await supabase
+    .from('whatsapp_numbers')
+    .insert({ ...values, id })
+  if (error) return { data: null, error }
+
+  const { data, error: selectError } = await supabase
+    .from('whatsapp_numbers')
+    .select(SERVER_NUMBER_COLUMNS)
+    .eq('id', id)
+    .single()
+  if (selectError) return { data: null, error: selectError }
+  return { data: data as unknown as WhatsAppNumberRow, error: null }
 }

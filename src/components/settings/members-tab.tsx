@@ -76,8 +76,13 @@ import {
 import { InviteMemberDialog } from './invite-member-dialog';
 import { SettingsPanelHead } from './settings-panel-head';
 import { ROLE_META } from './role-meta';
-import { Checkbox } from '@/components/ui/checkbox';
 import { useWhatsAppNumbers } from '@/hooks/use-whatsapp-numbers';
+import {
+  NumberAccessEditor,
+  accessListFromMap,
+  accessMapFromList,
+  type NumberAccessMap,
+} from './number-access-editor';
 
 interface Member {
   user_id: string;
@@ -88,6 +93,7 @@ interface Member {
   joined_at: string;
   whatsapp_number_access_mode: 'all' | 'selected';
   whatsapp_number_ids: string[];
+  whatsapp_number_access?: { id: string; level: 'view' | 'full' }[];
 }
 
 interface Invitation {
@@ -147,7 +153,7 @@ export function MembersTab() {
   );
   const [accessMember, setAccessMember] = useState<Member | null>(null);
   const [accessMode, setAccessMode] = useState<'all' | 'selected'>('all');
-  const [accessNumberIds, setAccessNumberIds] = useState<string[]>([]);
+  const [accessLevels, setAccessLevels] = useState<NumberAccessMap>({});
 
   const loadEverything = useCallback(async () => {
     try {
@@ -284,13 +290,16 @@ export function MembersTab() {
   function openNumberAccess(member: Member) {
     setAccessMember(member);
     setAccessMode(member.whatsapp_number_access_mode || 'all');
-    setAccessNumberIds(member.whatsapp_number_ids || []);
+    setAccessLevels(
+      accessMapFromList(member.whatsapp_number_access, member.whatsapp_number_ids)
+    );
   }
 
   async function saveNumberAccess() {
     if (!accessMember) return;
-    if (accessMode === 'selected' && accessNumberIds.length === 0) {
-      toast.error('Select at least one WhatsApp number');
+    const accessList = accessListFromMap(accessLevels);
+    if (accessMode === 'selected' && accessList.length === 0) {
+      toast.error('Give access to at least one WhatsApp number');
       return;
     }
     setPendingMemberAction(accessMember.user_id);
@@ -298,12 +307,17 @@ export function MembersTab() {
       const response = await fetch(`/api/account/members/${accessMember.user_id}/whatsapp-numbers`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ access_mode: accessMode, whatsapp_number_ids: accessNumberIds }),
+        body: JSON.stringify({ access_mode: accessMode, numbers: accessList }),
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || 'Failed to update number access');
       setMembers((current) => current.map((member) => member.user_id === accessMember.user_id
-        ? { ...member, whatsapp_number_access_mode: accessMode, whatsapp_number_ids: accessMode === 'all' ? [] : accessNumberIds }
+        ? {
+            ...member,
+            whatsapp_number_access_mode: accessMode,
+            whatsapp_number_ids: accessMode === 'all' ? [] : accessList.map((entry) => entry.id),
+            whatsapp_number_access: accessMode === 'all' ? [] : accessList,
+          }
         : member));
       setAccessMember(null);
       toast.success('WhatsApp number access updated');
@@ -669,33 +683,19 @@ export function MembersTab() {
           <DialogHeader>
             <DialogTitle>WhatsApp number access</DialogTitle>
             <DialogDescription>
-              Choose which business numbers {accessMember?.full_name || 'this member'} can view and use.
+              Choose what {accessMember?.full_name || 'this member'} can do on each business number.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
-            <Select value={accessMode} onValueChange={(value) => value && setAccessMode(value as 'all' | 'selected')}>
-              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All current and future numbers</SelectItem>
-                <SelectItem value="selected">Selected numbers only</SelectItem>
-              </SelectContent>
-            </Select>
-            {accessMode === 'selected' && (
-              <div className="space-y-2 rounded-lg border p-3">
-                {numbers.map((number) => (
-                  <label key={number.id} className="flex cursor-pointer items-center gap-2 text-sm">
-                    <Checkbox
-                      checked={accessNumberIds.includes(number.id)}
-                      onCheckedChange={(checked) => setAccessNumberIds((current) => checked
-                        ? [...new Set([...current, number.id])]
-                        : current.filter((id) => id !== number.id))}
-                    />
-                    <span>{number.label}</span>
-                    <span className="text-muted-foreground">{number.display_phone_number || number.phone_number_id}</span>
-                  </label>
-                ))}
-              </div>
-            )}
+            <NumberAccessEditor
+              numbers={numbers}
+              mode={accessMode}
+              onModeChange={setAccessMode}
+              access={accessLevels}
+              onAccessChange={(id, level) =>
+                setAccessLevels((current) => ({ ...current, [id]: level }))
+              }
+            />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAccessMember(null)}>Cancel</Button>

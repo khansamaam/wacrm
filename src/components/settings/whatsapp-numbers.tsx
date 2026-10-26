@@ -18,6 +18,8 @@ import {
   Plus,
   Smartphone,
   Unplug,
+  Webhook,
+  Building2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -41,8 +43,10 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SettingsPanelHead } from './settings-panel-head';
+import { WhatsAppManualConnect } from './whatsapp-manual-connect';
+import { WhatsAppNumberWebhookDialog } from './whatsapp-number-webhook';
 
-type AddStep = 'choose' | 'cloud_api' | 'coexistence';
+type AddStep = 'choose' | 'cloud_api' | 'coexistence' | 'manual';
 
 interface EmbeddedSignupResult {
   code: string;
@@ -97,9 +101,13 @@ export function WhatsAppNumbers() {
   const [editMetaAppSecret, setEditMetaAppSecret] = useState('');
   const [editMetaCoexistenceConfigId, setEditMetaCoexistenceConfigId] =
     useState('');
+  const [webhookNumber, setWebhookNumber] = useState<WhatsAppNumber | null>(
+    null
+  );
   const signupResultRef = useRef<PartialEmbeddedSignupResult | null>(
     null
   );
+  const signupErrorRef = useRef<string | null>(null);
   const appOrigin =
     process.env.NEXT_PUBLIC_SITE_URL ||
     (typeof window === 'undefined' ? '' : window.location.origin);
@@ -181,6 +189,19 @@ export function WhatsAppNumbers() {
         !isRecord(payload.data)
       )
         return;
+      // Embedded Signup v4 reports user-facing failures as ERROR, or as
+      // CANCEL carrying an error_message; surface them instead of waiting.
+      const eventName =
+        typeof payload.event === 'string' ? payload.event : '';
+      const errorMessage = readString(payload.data.error_message);
+      if (
+        eventName.toUpperCase() === 'ERROR' ||
+        (eventName === 'CANCEL' && errorMessage)
+      ) {
+        signupErrorRef.current =
+          errorMessage || 'Meta Embedded Signup reported an error';
+        return;
+      }
       if (
         payload.event !== 'FINISH' &&
         payload.event !== 'FINISH_ONLY_WABA' &&
@@ -298,6 +319,7 @@ export function WhatsAppNumbers() {
     }
     setSubmitting(true);
     signupResultRef.current = null;
+    signupErrorRef.current = null;
     try {
       await loadFacebookSdk(appId);
 
@@ -310,7 +332,8 @@ export function WhatsAppNumbers() {
               else
                 reject(
                   new Error(
-                    'Embedded Signup was cancelled or did not return a code'
+                    signupErrorRef.current ||
+                      'Embedded Signup was cancelled or did not return a code'
                   )
                 );
             },
@@ -335,6 +358,7 @@ export function WhatsAppNumbers() {
 
       // The FINISH window message and FB.login callback are independent. Give
       // the structured event a brief chance to arrive before rejecting.
+      if (signupErrorRef.current) throw new Error(signupErrorRef.current);
       const signup = await waitForSignupResult(signupResultRef, 5000);
       const response = await fetch('/api/whatsapp/embedded-signup/complete', {
         method: 'POST',
@@ -345,7 +369,9 @@ export function WhatsAppNumbers() {
           app_secret: appSecret,
           coexistence_config_id: coexistenceConfigId,
           label,
-          ...signup,
+          phone_number_id: signup.phoneNumberId,
+          waba_id: signup.wabaId,
+          business_id: signup.businessId,
         }),
       });
       const body = await readJson(response);
@@ -526,6 +552,14 @@ export function WhatsAppNumbers() {
                       </DropdownMenuItem>
                       {number.status !== 'disconnected' && (
                         <DropdownMenuItem
+                          onClick={() => setWebhookNumber(number)}
+                        >
+                          <Webhook className="mr-2 size-4" />
+                          Webhook &amp; relay
+                        </DropdownMenuItem>
+                      )}
+                      {number.status !== 'disconnected' && (
+                        <DropdownMenuItem
                           className="text-destructive"
                           onClick={() => void disconnect(number.id)}
                         >
@@ -543,7 +577,7 @@ export function WhatsAppNumbers() {
       )}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Add WhatsApp number</DialogTitle>
             <DialogDescription>
@@ -553,7 +587,7 @@ export function WhatsAppNumbers() {
           </DialogHeader>
 
           {step === 'choose' && (
-            <div className="grid gap-3 py-2 sm:grid-cols-2">
+            <div className="grid gap-3 py-2 sm:grid-cols-3">
               <button
                 className="rounded-xl border p-5 text-left hover:border-emerald-500"
                 onClick={() => setStep('cloud_api')}
@@ -575,7 +609,25 @@ export function WhatsAppNumbers() {
                   dashboard.
                 </p>
               </button>
+              <button
+                className="rounded-xl border p-5 text-left hover:border-emerald-500"
+                onClick={() => setStep('manual')}
+              >
+                <Building2 className="mb-3 size-6 text-emerald-500" />
+                <strong>Manual (any business)</strong>
+                <p className="text-muted-foreground mt-2 text-sm">
+                  WABA ID + System User token. Connect one or more numbers,
+                  including Business App numbers from another business.
+                </p>
+              </button>
             </div>
+          )}
+
+          {step === 'manual' && (
+            <WhatsAppManualConnect
+              onBack={() => setStep('choose')}
+              onConnected={loadNumbers}
+            />
           )}
 
           {step === 'cloud_api' && (
@@ -777,6 +829,11 @@ export function WhatsAppNumbers() {
         </DialogContent>
       </Dialog>
 
+      <WhatsAppNumberWebhookDialog
+        number={webhookNumber}
+        onClose={() => setWebhookNumber(null)}
+      />
+
       <Dialog open={Boolean(editingNumber)} onOpenChange={(open) => {
         if (!open) setEditingNumber(null);
       }}>
@@ -947,20 +1004,24 @@ async function waitForSignupResult(
   ref: MutableRefObject<PartialEmbeddedSignupResult | null>,
   timeoutMs: number
 ): Promise<Omit<EmbeddedSignupResult, 'code'>> {
+  // Coexistence completions (FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING) only
+  // guarantee waba_id; the server resolves the phone number from the WABA.
+  // Keep waiting briefly for phone_number_id when Meta does send it.
   const started = Date.now();
   while (
-    (!ref.current?.phoneNumberId || !ref.current?.wabaId) &&
+    !ref.current?.phoneNumberId &&
     Date.now() - started < timeoutMs
   ) {
+    if (ref.current?.wabaId && Date.now() - started >= 1500) break;
     await new Promise((resolve) => window.setTimeout(resolve, 100));
   }
-  if (!ref.current?.phoneNumberId || !ref.current?.wabaId) {
+  if (!ref.current?.wabaId) {
     throw new Error(
-      'Meta did not return the selected phone number details. Make sure session logging is enabled for this Embedded Signup configuration.'
+      'Meta did not return the WhatsApp Business Account details. Make sure session logging is enabled for this Embedded Signup configuration.'
     );
   }
   return {
-    phoneNumberId: ref.current.phoneNumberId,
+    phoneNumberId: ref.current.phoneNumberId ?? '',
     wabaId: ref.current.wabaId,
     businessId: ref.current.businessId,
   };

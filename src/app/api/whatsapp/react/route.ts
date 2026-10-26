@@ -9,6 +9,11 @@ import {
   RATE_LIMITS,
 } from '@/lib/rate-limit';
 import { resolveWhatsAppNumber } from '@/lib/whatsapp/numbers';
+import {
+  assertNumberWriteAccess,
+  NumberWriteAccessError,
+} from '@/lib/whatsapp/number-access';
+import { isAccountRole } from '@/lib/auth/roles';
 
 /**
  * POST /api/whatsapp/react
@@ -41,10 +46,13 @@ export async function POST(request: Request) {
     // lookups work for teammates who didn't author the rows directly.
     const { data: profile } = await supabase
       .from('profiles')
-      .select('account_id')
+      .select('account_id, account_role')
       .eq('user_id', user.id)
       .maybeSingle();
     const accountId = profile?.account_id as string | undefined;
+    const accountRole = isAccountRole(profile?.account_role)
+      ? profile.account_role
+      : 'viewer';
     if (!accountId) {
       return NextResponse.json(
         { error: 'Your profile is not linked to an account.' },
@@ -115,6 +123,21 @@ export async function POST(request: Request) {
       accountId,
       conversationId: conversation.id,
     });
+    // Reacting sends a WhatsApp message: needs write access to the number.
+    try {
+      await assertNumberWriteAccess({
+        supabase,
+        userId: user.id,
+        accountId,
+        role: accountRole,
+        numberId: config.id,
+      });
+    } catch (error) {
+      if (error instanceof NumberWriteAccessError) {
+        return NextResponse.json({ error: error.message }, { status: 403 });
+      }
+      throw error;
+    }
     if (!config.access_token) {
       return NextResponse.json({ error: 'WhatsApp access token is missing.' }, { status: 400 });
     }

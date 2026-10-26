@@ -62,6 +62,7 @@ import {
 } from "@/components/interactive/interactive-builder"
 import { interactivePayloadPreviewText } from "@/lib/whatsapp/interactive"
 import { createClient } from "@/lib/supabase/client"
+import { useWhatsAppNumbers } from "@/hooks/use-whatsapp-numbers"
 import { cn } from "@/lib/utils"
 
 // ------------------------------------------------------------
@@ -84,6 +85,9 @@ export interface BuilderInitial {
   trigger_config: Record<string, unknown>
   is_active: boolean
   steps: BuilderStep[]
+  /** WhatsApp number scope. null = all numbers; undefined = not chosen
+   *  yet (new automation) → defaults to the selected/default number. */
+  whatsapp_number_id?: string | null
 }
 
 // ------------------------------------------------------------
@@ -630,6 +634,16 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
   const [state, setState] = useState<BuilderInitial>(initial)
   const [saving, setSaving] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const { numbers, selectedNumberId } = useWhatsAppNumbers()
+  // New automations default to the number currently selected in the app,
+  // else the workspace default, so they never silently run on every number.
+  const effectiveNumberId: string | null =
+    state.whatsapp_number_id !== undefined
+      ? state.whatsapp_number_id
+      : selectedNumberId ??
+        numbers.find((n) => n.is_default)?.id ??
+        numbers[0]?.id ??
+        null
 
   function patchTop<K extends keyof BuilderInitial>(key: K, value: BuilderInitial[K]) {
     setState((s) => ({ ...s, [key]: value }))
@@ -670,6 +684,11 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
         trigger_config: state.trigger_config,
         is_active: state.is_active,
         steps: toApiSteps(state.steps),
+        // Sent once numbers are known (or the user chose explicitly), so an
+        // edit never clears a scope just because the list is still loading.
+        ...(state.whatsapp_number_id !== undefined || numbers.length > 0
+          ? { whatsapp_number_id: effectiveNumberId }
+          : {}),
       }
 
       const res = isEditing
@@ -752,6 +771,31 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
         <div className="absolute inset-0 bg-[radial-gradient(circle,var(--border)_1px,transparent_1px)] [background-size:20px_20px] pointer-events-none" />
         <div className="relative mx-auto flex max-w-2xl flex-col items-center gap-0 px-4 py-10">
           <ResourcesProvider>
+            {numbers.length > 1 && (
+              <div className="mb-4 w-full rounded-xl border border-border bg-card p-4">
+                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                  {t("numberScope.label")}
+                </label>
+                <select
+                  value={effectiveNumberId ?? ""}
+                  onChange={(e) =>
+                    patchTop("whatsapp_number_id", e.target.value || null)
+                  }
+                  className={SELECT_CLASS}
+                >
+                  {numbers.map((n) => (
+                    <option key={n.id} value={n.id}>
+                      {n.label}
+                      {n.display_phone_number ? ` (${n.display_phone_number})` : ""}
+                    </option>
+                  ))}
+                  <option value="">{t("numberScope.all")}</option>
+                </select>
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  {t("numberScope.hint")}
+                </p>
+              </div>
+            )}
             <TriggerCard
               type={state.trigger_type}
               config={state.trigger_config}

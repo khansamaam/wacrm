@@ -16,6 +16,7 @@ import { NextResponse } from "next/server";
 
 import { getCurrentAccount, toErrorResponse } from "@/lib/auth/account";
 import { canManageMembers, isAccountRole } from "@/lib/auth/roles";
+import { isMissingAccessLevelSupport } from "@/lib/whatsapp/number-access";
 
 interface ProfileRow {
   user_id: string;
@@ -49,17 +50,32 @@ export async function GET() {
 
     const canSeeEmails = canManageMembers(ctx.role);
 
-    const { data: assignments, error: assignmentError } = await ctx.supabase
+    type AssignmentRow = { user_id: string; whatsapp_number_id: string; access_level?: string };
+    const withLevels = await ctx.supabase
       .from('whatsapp_number_members')
-      .select('user_id, whatsapp_number_id')
+      .select('user_id, whatsapp_number_id, access_level')
       .eq('account_id', ctx.accountId);
+    let assignments = withLevels.data as AssignmentRow[] | null;
+    let assignmentError = withLevels.error;
+    if (assignmentError && isMissingAccessLevelSupport(assignmentError)) {
+      // Before migration 059 every assignment is full access.
+      const legacy = await ctx.supabase
+        .from('whatsapp_number_members')
+        .select('user_id, whatsapp_number_id')
+        .eq('account_id', ctx.accountId);
+      assignments = legacy.data as AssignmentRow[] | null;
+      assignmentError = legacy.error;
+    }
     if (assignmentError) {
       return NextResponse.json({ error: 'Failed to load number assignments' }, { status: 500 });
     }
-    const assignedByUser = new Map<string, string[]>();
+    const assignedByUser = new Map<string, { id: string; level: 'view' | 'full' }[]>();
     for (const assignment of assignments ?? []) {
       const list = assignedByUser.get(assignment.user_id) ?? [];
-      list.push(assignment.whatsapp_number_id);
+      list.push({
+        id: assignment.whatsapp_number_id,
+        level: assignment.access_level === 'view' ? 'view' : 'full',
+      });
       assignedByUser.set(assignment.user_id, list);
     }
 
@@ -77,7 +93,8 @@ export async function GET() {
           role: row.account_role,
           joined_at: row.created_at,
           whatsapp_number_access_mode: row.account_role === 'owner' ? 'all' : row.whatsapp_number_access_mode,
-          whatsapp_number_ids: assignedByUser.get(row.user_id) ?? [],
+          whatsapp_number_ids: (assignedByUser.get(row.user_id) ?? []).map((entry) => entry.id),
+          whatsapp_number_access: assignedByUser.get(row.user_id) ?? [],
         },
       ];
     });

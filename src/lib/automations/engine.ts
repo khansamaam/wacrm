@@ -54,6 +54,34 @@ export interface DispatchInput {
   triggerType: AutomationTriggerType
   contactId?: string | null
   context?: AutomationContext
+  /** WhatsApp number the event happened on. Only automations scoped to
+   *  this number (or to no number) fire. When omitted it is derived from
+   *  `context.conversation_id`; with neither, every automation is eligible
+   *  (events with no number context, e.g. a tag added in the dashboard). */
+  whatsappNumberId?: string | null
+}
+
+/** Postgres/PostgREST "column does not exist" — migration 058 not applied. */
+function isMissingColumnError(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false
+  return (
+    error.code === '42703' ||
+    error.code === 'PGRST204' ||
+    /column .*whatsapp_number_id/i.test(error.message ?? '')
+  )
+}
+
+async function resolveDispatchNumberId(input: DispatchInput): Promise<string | null> {
+  if (input.whatsappNumberId) return input.whatsappNumberId
+  const conversationId = input.context?.conversation_id
+  if (!conversationId) return null
+  const { data } = await supabaseAdmin()
+    .from('conversations')
+    .select('whatsapp_number_id')
+    .eq('id', conversationId)
+    .eq('account_id', input.accountId)
+    .maybeSingle()
+  return (data?.whatsapp_number_id as string | null | undefined) ?? null
 }
 
 /**
@@ -92,12 +120,24 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<vo
       }
     }
 
-    const { data: automations, error } = await db
-      .from('automations')
-      .select('*')
-      .eq('account_id', input.accountId)
-      .eq('trigger_type', input.triggerType)
-      .eq('is_active', true)
+    const numberId = await resolveDispatchNumberId(input)
+    const baseQuery = () =>
+      db
+        .from('automations')
+        .select('*')
+        .eq('account_id', input.accountId)
+        .eq('trigger_type', input.triggerType)
+        .eq('is_active', true)
+
+    let { data: automations, error } = numberId
+      ? await baseQuery().or(
+          `whatsapp_number_id.is.null,whatsapp_number_id.eq.${numberId}`,
+        )
+      : await baseQuery()
+    if (error && numberId && isMissingColumnError(error)) {
+      // Migration 058 not applied yet: behave exactly as before.
+      ;({ data: automations, error } = await baseQuery())
+    }
 
     if (error) {
       console.error('[automations] fetch failed:', error)
@@ -447,6 +487,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         accountId: args.automation.account_id,
         triggerType: 'tag_added',
         contactId: args.contactId,
+        whatsappNumberId: args.automation.whatsapp_number_id ?? null,
         context: {
           ...args.context,
           tag_id: cfg.tag_id,
@@ -488,11 +529,14 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         agentId = profiles?.[0]?.user_id
       }
       if (!agentId) return 'no agent resolved'
+      // Only the conversation this run belongs to: a contact can have a
+      // separate thread on each WhatsApp number.
+      const conversationId = await resolveConversationId(args)
       await db
         .from('conversations')
         .update({ assigned_agent_id: agentId })
         .eq('account_id', args.automation.account_id)
-        .eq('contact_id', args.contactId)
+        .eq('id', conversationId)
       return `assigned to ${agentId}`
     }
 
@@ -603,11 +647,12 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
 
     case 'close_conversation': {
       if (!args.contactId) throw new Error('close_conversation needs a contact')
+      const conversationId = await resolveConversationId(args)
       await db
         .from('conversations')
         .update({ status: 'closed', updated_at: new Date().toISOString() })
         .eq('account_id', args.automation.account_id)
-        .eq('contact_id', args.contactId)
+        .eq('id', conversationId)
       return 'conversation closed'
     }
 
@@ -631,13 +676,21 @@ async function resolveConversationId(args: ExecuteArgs): Promise<string> {
   const fromCtx = args.context.conversation_id
   if (fromCtx) return fromCtx
   if (!args.contactId) throw new Error('cannot resolve conversation: no contact')
-  const { data, error } = await supabaseAdmin()
+  // A contact can have one thread per WhatsApp number. Prefer the thread on
+  // the automation's number, then the most recently active one.
+  let query = supabaseAdmin()
     .from('conversations')
     .select('id')
     .eq('account_id', args.automation.account_id)
     .eq('contact_id', args.contactId)
-    .maybeSingle()
+  if (args.automation.whatsapp_number_id) {
+    query = query.eq('whatsapp_number_id', args.automation.whatsapp_number_id)
+  }
+  const { data: rows, error } = await query
+    .order('last_message_at', { ascending: false, nullsFirst: false })
+    .limit(1)
   if (error) throw new Error(`conversation lookup failed: ${error.message}`)
+  const data = rows?.[0] as { id?: string } | undefined
   if (!data?.id) {
     const prefix = args.triggerEvent === 'tag_added'
       ? 'tag_added automation cannot send'

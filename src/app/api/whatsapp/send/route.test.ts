@@ -19,6 +19,13 @@ let templateRow: Record<string, unknown> | null = null
 // the shared send core re-loads the conversation (with its contact) from
 // just the id, so the mock must model insert-then-select-by-id.
 let createdConversation: Record<string, unknown> | null = null
+// Caller's profile and per-number assignments (migrations 048/059).
+let profileRow: Record<string, unknown> = {
+  account_id: 'acct-1',
+  account_role: 'agent',
+  whatsapp_number_access_mode: 'all',
+}
+let numberMemberRows: Array<Record<string, unknown>> = []
 
 const CONTACT = {
   id: 'contact-1',
@@ -36,7 +43,9 @@ function makeSupabaseMock() {
     const selectResult = () => {
       switch (table) {
         case 'profiles':
-          return { data: { account_id: 'acct-1' }, error: null }
+          return { data: profileRow, error: null }
+        case 'whatsapp_number_members':
+          return { data: numberMemberRows, error: null }
         case 'contacts':
           return { data: contactRow, error: null }
         case 'conversations':
@@ -191,6 +200,36 @@ describe('POST /api/whatsapp/send — contact_id template path', () => {
     templateRow = null
     supabaseMock = makeSupabaseMock()
     sendTemplateMessage.mockClear()
+    profileRow = {
+      account_id: 'acct-1',
+      account_role: 'agent',
+      whatsapp_number_access_mode: 'all',
+    }
+    numberMemberRows = []
+  })
+
+  it('refuses to send for a member with view-only access to the number', async () => {
+    profileRow = { ...profileRow, whatsapp_number_access_mode: 'selected' }
+    numberMemberRows = [{ whatsapp_number_id: 'number-1', access_level: 'view' }]
+    const res = await postContactTemplate()
+    expect(res.status).toBe(403)
+    expect(sendTemplateMessage).not.toHaveBeenCalled()
+    expect(conversationInserts).toHaveLength(0)
+  })
+
+  it('allows a member with full access to the number', async () => {
+    profileRow = { ...profileRow, whatsapp_number_access_mode: 'selected' }
+    numberMemberRows = [{ whatsapp_number_id: 'number-1', access_level: 'full' }]
+    const res = await postContactTemplate()
+    expect(res.status).toBe(200)
+    expect(sendTemplateMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses to send for a workspace viewer', async () => {
+    profileRow = { ...profileRow, account_role: 'viewer' }
+    const res = await postContactTemplate()
+    expect(res.status).toBe(403)
+    expect(sendTemplateMessage).not.toHaveBeenCalled()
   })
 
   afterEach(() => {

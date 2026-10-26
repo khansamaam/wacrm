@@ -283,6 +283,179 @@ export async function getSubscribedApps(
   return data.data ?? []
 }
 
+// ============================================================
+// Manual / cross-business connection helpers
+// ============================================================
+//
+// Used when a number is connected with a System User token from any
+// business (including coexistence numbers onboarded elsewhere). The
+// per-number webhook override routes that number's events to this
+// deployment without touching the Meta App dashboard callback URL.
+
+export interface WabaPhoneNumber {
+  id: string
+  display_phone_number?: string
+  verified_name?: string
+  status?: string
+  code_verification_status?: string
+  is_on_biz_app?: boolean
+  platform_type?: string
+}
+
+export interface ListWabaPhoneNumbersArgs {
+  wabaId: string
+  accessToken: string
+}
+
+const WABA_PHONE_NUMBER_FIELDS =
+  'id,display_phone_number,verified_name,status,code_verification_status,is_on_biz_app,platform_type'
+
+/** List every phone number on a WABA, following Graph pagination. */
+export async function listWabaPhoneNumbers(
+  args: ListWabaPhoneNumbersArgs,
+): Promise<WabaPhoneNumber[]> {
+  const { wabaId, accessToken } = args
+  const numbers: WabaPhoneNumber[] = []
+  let after: string | null = null
+
+  // Bounded so a misbehaving cursor can never loop forever.
+  for (let page = 0; page < 20; page++) {
+    const params = new URLSearchParams({ fields: WABA_PHONE_NUMBER_FIELDS })
+    if (after) params.set('after', after)
+    const response = await fetch(
+      `${META_API_BASE}/${wabaId}/phone_numbers?${params}`,
+      { headers: { Authorization: `Bearer ${accessToken}` }, cache: 'no-store' },
+    )
+    if (!response.ok) {
+      await throwMetaError(response, `Meta API error: ${response.status}`)
+    }
+    const data = (await response.json()) as {
+      data?: WabaPhoneNumber[]
+      paging?: { next?: string; cursors?: { after?: string } }
+    }
+    numbers.push(...(data.data ?? []))
+    after = data.paging?.next ? data.paging.cursors?.after ?? null : null
+    if (!after) break
+  }
+
+  return numbers
+}
+
+export interface PhoneNumberWebhookConfiguration {
+  override_callback_uri?: string
+  phone_number?: string
+  whatsapp_business_account?: string
+  application?: string
+}
+
+export interface PhoneNumberStatus {
+  id: string
+  display_phone_number?: string
+  verified_name?: string
+  status?: string
+  code_verification_status?: string
+  is_on_biz_app?: boolean
+  platform_type?: string
+  webhook_configuration?: PhoneNumberWebhookConfiguration
+}
+
+export interface GetPhoneNumberStatusArgs {
+  phoneNumberId: string
+  accessToken: string
+}
+
+/** Fetch readiness + current webhook routing for one phone number. */
+export async function getPhoneNumberStatus(
+  args: GetPhoneNumberStatusArgs,
+): Promise<PhoneNumberStatus> {
+  const { phoneNumberId, accessToken } = args
+  const params = new URLSearchParams({
+    fields:
+      'id,display_phone_number,verified_name,status,code_verification_status,is_on_biz_app,platform_type,webhook_configuration',
+  })
+  const response = await fetch(`${META_API_BASE}/${phoneNumberId}?${params}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    cache: 'no-store',
+  })
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+  return response.json()
+}
+
+export interface SetPhoneNumberWebhookOverrideArgs {
+  phoneNumberId: string
+  accessToken: string
+  callbackUrl: string
+  verifyToken: string
+}
+
+/**
+ * Point one phone number's webhooks at `callbackUrl`. A phone-level
+ * override wins over the WABA and app callback, so numbers from any
+ * business can be routed here. Meta verifies the URL with a GET
+ * handshake using `verifyToken` before accepting it. The WABA must
+ * already be subscribed to the app (see subscribeWabaToApp).
+ */
+export async function setPhoneNumberWebhookOverride(
+  args: SetPhoneNumberWebhookOverrideArgs,
+): Promise<void> {
+  const { phoneNumberId, accessToken, callbackUrl, verifyToken } = args
+  const response = await fetch(`${META_API_BASE}/${phoneNumberId}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({
+      webhook_configuration: {
+        override_callback_uri: callbackUrl,
+        verify_token: verifyToken,
+      },
+    }),
+  })
+  if (!response.ok) {
+    await throwMetaError(response, `Meta webhook override failed: ${response.status}`)
+  }
+}
+
+export interface TokenPermission {
+  permission: string
+  status: string
+}
+
+/** Permissions granted to the access token (`GET /me/permissions`). */
+export async function getTokenPermissions(args: {
+  accessToken: string
+}): Promise<TokenPermission[]> {
+  const response = await fetch(`${META_API_BASE}/me/permissions`, {
+    headers: { Authorization: `Bearer ${args.accessToken}` },
+    cache: 'no-store',
+  })
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+  const data = (await response.json()) as { data?: TokenPermission[] }
+  return data.data ?? []
+}
+
+/** Throws when the token cannot read the WABA's message templates. */
+export async function checkTemplateAccess(args: {
+  wabaId: string
+  accessToken: string
+}): Promise<void> {
+  const response = await fetch(
+    `${META_API_BASE}/${args.wabaId}/message_templates?limit=1`,
+    {
+      headers: { Authorization: `Bearer ${args.accessToken}` },
+      cache: 'no-store',
+    },
+  )
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+}
+
 export interface RequestSmbAppDataSyncArgs {
   phoneNumberId: string
   accessToken: string

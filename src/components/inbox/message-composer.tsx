@@ -118,6 +118,9 @@ interface MessageComposerProps {
   onOpenTemplates: () => void;
   replyTo?: ReplyDraft | null;
   onClearReply?: () => void;
+  /** True when the member has view-only access to this conversation's
+   *  WhatsApp number (migration 059). */
+  numberReadOnly?: boolean;
 }
 
 function formatDuration(seconds: number): string {
@@ -140,6 +143,7 @@ export function MessageComposer({
   onOpenTemplates,
   replyTo,
   onClearReply,
+  numberReadOnly = false,
 }: MessageComposerProps) {
   const t = useTranslations("Inbox.composer");
 
@@ -188,7 +192,7 @@ export function MessageComposer({
   // For solo users this is always true — single-owner accounts pass
   // every capability — so the disabled branch is a no-op there.
   const canSend = useCan("send-messages");
-  const readOnly = !canSend;
+  const readOnly = !canSend || numberReadOnly;
   // Media (like free-form text) is only allowed inside the 24h window.
   const inputsDisabled = readOnly || sessionExpired;
 

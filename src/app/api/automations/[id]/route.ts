@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireRole, toErrorResponse } from '@/lib/auth/account';
 import { supabaseAdmin } from '@/lib/automations/admin-client';
+import { parseAutomationNumberId } from '@/lib/automations/number-scope';
 import {
   loadStepsTree,
   replaceSteps,
@@ -89,6 +90,16 @@ export async function PATCH(
     'is_active',
   ] as const) {
     if (k in body) update[k] = body[k];
+  }
+  if ('whatsapp_number_id' in body) {
+    const parsed = await parseAutomationNumberId(
+      admin,
+      accountId,
+      body.whatsapp_number_id
+    );
+    if (!parsed.ok)
+      return NextResponse.json({ error: parsed.error }, { status: 400 });
+    update.whatsapp_number_id = parsed.value;
   }
 
   // If this PATCH leaves the automation active (either explicitly

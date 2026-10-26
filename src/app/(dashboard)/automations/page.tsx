@@ -17,6 +17,9 @@ import {
   PhoneCall,
   Loader2,
 } from "lucide-react"
+import { useWhatsAppNumbers } from "@/hooks/use-whatsapp-numbers"
+import { WhatsAppNumberFilter } from "@/components/whatsapp/number-filter"
+import type { WhatsAppNumber } from "@/types"
 
 import { createClient } from "@/lib/supabase/client"
 import { useCan } from "@/hooks/use-can"
@@ -66,6 +69,7 @@ export default function AutomationsPage() {
   const [error, setError] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<Automation | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const { numbers, selectedNumberId, setSelectedNumberId } = useWhatsAppNumbers()
 
   async function load() {
     try {
@@ -157,6 +161,13 @@ export default function AutomationsPage() {
   }
 
   const showTemplates = automations.length < 3
+  // With a number selected, show that number's automations plus the ones
+  // that run on every number (whatsapp_number_id null).
+  const visibleAutomations = selectedNumberId
+    ? automations.filter(
+        (a) => !a.whatsapp_number_id || a.whatsapp_number_id === selectedNumberId,
+      )
+    : automations
 
   return (
     <div className="space-y-6">
@@ -167,6 +178,12 @@ export default function AutomationsPage() {
             {t("subtitle")}
           </p>
         </div>
+        <div className="flex flex-wrap items-center gap-2">
+        <WhatsAppNumberFilter
+          numbers={numbers}
+          value={selectedNumberId}
+          onChange={setSelectedNumberId}
+        />
         <GatedButton
           canAct={canCreate}
           gateReason="create automations"
@@ -176,6 +193,7 @@ export default function AutomationsPage() {
           <Plus className="h-4 w-4" />
           {t("create")}
         </GatedButton>
+        </div>
       </div>
 
       {showTemplates && (
@@ -203,7 +221,7 @@ export default function AutomationsPage() {
         </section>
       )}
 
-      {automations.length === 0 ? (
+      {visibleAutomations.length === 0 ? (
         <div className="flex h-48 flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card/40">
           <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
             <Zap className="h-6 w-6 text-primary" />
@@ -215,10 +233,11 @@ export default function AutomationsPage() {
         </div>
       ) : (
         <ul className="space-y-3">
-          {automations.map((a) => (
+          {visibleAutomations.map((a) => (
             <AutomationCard
               key={a.id}
               automation={a}
+              numbers={numbers}
               onToggle={(next) => toggleActive(a, next)}
               onEdit={() => router.push(`/automations/${a.id}/edit`)}
               onDuplicate={() => duplicate(a)}
@@ -263,6 +282,7 @@ export default function AutomationsPage() {
 
 function AutomationCard({
   automation,
+  numbers,
   onToggle,
   onEdit,
   onDuplicate,
@@ -271,6 +291,7 @@ function AutomationCard({
   t,
 }: {
   automation: Automation
+  numbers: WhatsAppNumber[]
   onToggle: (next: boolean) => void
   onEdit: () => void
   onDuplicate: () => void
@@ -317,6 +338,13 @@ function AutomationCard({
             >
               {meta.label}
             </span>
+            {numbers.length > 1 && (
+              <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-[11px] font-medium">
+                {automation.whatsapp_number_id
+                  ? numbers.find((n) => n.id === automation.whatsapp_number_id)?.label ?? "—"
+                  : "All numbers"}
+              </span>
+            )}
             <span className="tabular-nums">
               {automation.execution_count === 1
                 ? t("runs", { count: automation.execution_count })

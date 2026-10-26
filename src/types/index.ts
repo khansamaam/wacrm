@@ -78,6 +78,8 @@ export interface AccountMember {
   joined_at: string;
   whatsapp_number_access_mode?: 'all' | 'selected';
   whatsapp_number_ids?: string[];
+  /** Per-number levels (migration 059); empty in 'all' mode. */
+  whatsapp_number_access?: { id: string; level: 'view' | 'full' }[];
 }
 
 /**
@@ -362,6 +364,9 @@ export interface WhatsAppNumber {
     'not_requested' | 'pending' | 'processing' | 'completed' | 'failed';
   created_at: string;
   updated_at: string;
+  /** The signed-in member's level on this number (GET /api/whatsapp/numbers).
+   *  'view' = can read chats but not reply. */
+  my_access_level?: 'view' | 'full';
 }
 
 // Raw Meta status enum. We persist this verbatim from Meta (sync + webhook)
@@ -679,6 +684,9 @@ export interface Automation {
   description?: string;
   trigger_type: AutomationTriggerType;
   trigger_config: AutomationTriggerConfig;
+  /** WhatsApp number this automation runs for (migration 058).
+   *  null/undefined = every number in the account. */
+  whatsapp_number_id?: string | null;
   is_active: boolean;
   execution_count: number;
   last_executed_at?: string | null;

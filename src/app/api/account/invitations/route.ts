@@ -33,6 +33,10 @@ import {
   RATE_LIMITS,
 } from "@/lib/rate-limit";
 import { supabaseAdmin } from "@/lib/flows/admin-client";
+import {
+  isMissingAccessLevelSupport,
+  parseNumberAccessList,
+} from "@/lib/whatsapp/number-access";
 
 // Resolve the base URL we publish invite links under.
 //
@@ -181,7 +185,7 @@ export async function POST(request: Request) {
     if (!limit.success) return rateLimitResponse(limit);
 
     const body = (await request.json().catch(() => null)) as
-      | { role?: unknown; expiresInDays?: unknown; label?: unknown; whatsappNumberAccessMode?: unknown; whatsappNumberIds?: unknown }
+      | { role?: unknown; expiresInDays?: unknown; label?: unknown; whatsappNumberAccessMode?: unknown; whatsappNumberIds?: unknown; whatsappNumberAccess?: unknown }
       | null;
 
     const role = body?.role;
@@ -204,9 +208,16 @@ export async function POST(request: Request) {
     const expiryDays = clampExpiryDays(expiresInDays);
     const expiresAt = inviteExpiresAt(expiryDays);
     const accessMode = body?.whatsappNumberAccessMode === 'selected' ? 'selected' : 'all';
-    const numberIds = Array.isArray(body?.whatsappNumberIds)
-      ? body.whatsappNumberIds.filter((id): id is string => typeof id === 'string')
-      : [];
+    // Level-aware list [{ id, level: 'view' | 'full' }] (migration 059), or
+    // the legacy id list where every number gets full access.
+    const numberAccess = parseNumberAccessList(
+      body?.whatsappNumberAccess,
+      body?.whatsappNumberIds ?? [],
+    );
+    if (!numberAccess) {
+      return NextResponse.json({ error: 'Invalid WhatsApp number access list' }, { status: 400 });
+    }
+    const numberIds = numberAccess.map((entry) => entry.id);
     if (accessMode === 'selected' && numberIds.length === 0) {
       return NextResponse.json({ error: 'Select at least one WhatsApp number' }, { status: 400 });
     }
@@ -258,12 +269,29 @@ export async function POST(request: Request) {
     }
 
     if (accessMode === 'selected') {
-      const { error: assignmentError } = await admin
+      let { error: assignmentError } = await admin
         .from('whatsapp_invitation_number_access')
-        .insert([...new Set(numberIds)].map((whatsappNumberId) => ({
+        .insert(numberAccess.map((entry) => ({
           invitation_id: data.id,
-          whatsapp_number_id: whatsappNumberId,
+          whatsapp_number_id: entry.id,
+          access_level: entry.level,
         })));
+      if (assignmentError && isMissingAccessLevelSupport(assignmentError)) {
+        // Migration 059 not applied: only full access can be stored.
+        if (numberAccess.some((entry) => entry.level === 'view')) {
+          await admin.from('account_invitations').delete().eq('id', data.id);
+          return NextResponse.json(
+            { error: 'View-only access needs database migration 059 to be applied' },
+            { status: 409 },
+          );
+        }
+        ({ error: assignmentError } = await admin
+          .from('whatsapp_invitation_number_access')
+          .insert(numberAccess.map((entry) => ({
+            invitation_id: data.id,
+            whatsapp_number_id: entry.id,
+          }))));
+      }
       if (assignmentError) {
         await admin.from('account_invitations').delete().eq('id', data.id);
         console.error('[POST /api/account/invitations] number assignment failed:', assignmentError);

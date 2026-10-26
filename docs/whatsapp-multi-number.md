@@ -43,17 +43,61 @@ allows old and new application instances to overlap during a rolling deploy.
 Set these server variables:
 
 ```dotenv
-META_APP_ID=...
-META_APP_SECRET=...
-NEXT_PUBLIC_META_APP_ID=...
-NEXT_PUBLIC_META_COEXISTENCE_CONFIG_ID=...
+META_COEXISTENCE_APP_ID=...
+META_COEXISTENCE_APP_SECRET=...
+META_COEXISTENCE_CONFIG_ID=...
+NEXT_PUBLIC_SITE_URL=https://your-host.example   # must be public https
 AUTOMATION_CRON_SECRET=...
 ```
 
-The Meta app and Embedded Signup configuration must be approved/enabled for
-WhatsApp Business App onboarding. The browser receives only the App ID and
-configuration ID; the authorization code is exchanged using `META_APP_SECRET`
-on the server and is never stored.
+`META_APP_ID` / `META_APP_SECRET` (legacy Cloud API app) and
+`NEXT_PUBLIC_META_APP_ID` / `NEXT_PUBLIC_META_COEXISTENCE_CONFIG_ID` are still
+accepted as fallbacks. The browser receives only the App ID and configuration
+ID; the authorization code is exchanged on the server and is never stored.
+Webhook signatures are accepted from `META_APP_SECRET`,
+`META_COEXISTENCE_APP_SECRET`, or the number's own saved App Secret.
+
+When Embedded Signup returns only the WABA ID (common for Business App
+onboarding), the server resolves the onboarded number from that WABA. If the
+WABA holds several numbers, use the manual connection below instead.
+
+## Manual connection (numbers from any Meta Business)
+
+Settings → WhatsApp → Add number → **Manual (any business)** connects one or
+more numbers with a WABA ID and a System User access token, the same way
+Chatwoot's manual setup does. The number can belong to a different Meta
+Business than the app.
+
+1. In the number owner's Business Settings → System users, assign the WABA and
+   this app to a system user, then generate a permanent token with
+   `whatsapp_business_messaging` and `whatsapp_business_management`.
+2. Enter the WABA ID and token, click **Fetch numbers**, and select the
+   numbers to connect. Each number is stored separately with its own token,
+   verify token, and webhook routing.
+3. WhatsApp Business App numbers are stored as coexistence and are never
+   re-registered, so they keep working on the phone.
+
+For every connected number the app subscribes itself to the WABA and sets a
+phone-level webhook override (`override_callback_uri`) to
+`NEXT_PUBLIC_SITE_URL/api/whatsapp/webhook`. No Meta App dashboard change is
+needed. A number can only have one override per app: if another system (for
+example Chatwoot) set its own override, use the number's **Webhook & relay**
+dialog → **Route webhooks to this app**.
+
+### Keeping Chatwoot (or another system) in sync
+
+In **Webhook & relay**, enable **Send a copy to Chatwoot** and enter the
+Chatwoot base URL (for example `http://10.0.0.111:3001`). Each webhook is
+forwarded unchanged — same body and `X-Hub-Signature-256` — to
+`/webhooks/whatsapp/+<number>`, so Chatwoot verifies it as if Meta had called
+it. Relays are best-effort and never delay or block processing here. The
+target host must be listed in `WHATSAPP_WEBHOOK_RELAY_ALLOWED_HOSTS`. Do not
+press "Setup webhook" in Chatwoot for these numbers afterwards; that moves the
+override back to Chatwoot.
+
+Database migration `057_whatsapp_webhook_routing.sql` stores the routing and
+relay state. Connecting numbers works without it, but the status panel and
+relay need it.
 
 Run the coexistence worker every minute:
 

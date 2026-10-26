@@ -4,6 +4,7 @@ import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { getTemplate } from '@/lib/automations/templates'
 import { insertSteps, type BuilderStepInput } from '@/lib/automations/steps-tree'
+import { parseAutomationNumberId } from '@/lib/automations/number-scope'
 import {
   validateStepsForActivation,
   validateTriggerForActivation,
@@ -105,6 +106,15 @@ export async function POST(request: Request) {
   }
 
   const admin = supabaseAdmin()
+
+  // Optional WhatsApp number scope (migration 058). Omitted = all numbers.
+  let numberScope: { whatsapp_number_id: string | null } | Record<string, never> = {}
+  if ('whatsapp_number_id' in body) {
+    const parsed = await parseAutomationNumberId(admin, accountId, body.whatsapp_number_id)
+    if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 })
+    numberScope = { whatsapp_number_id: parsed.value }
+  }
+
   const { data: automation, error: insertErr } = await admin
     .from('automations')
     .insert({
@@ -115,6 +125,7 @@ export async function POST(request: Request) {
       trigger_type: effectiveTriggerType,
       trigger_config: effectiveTriggerConfig ?? {},
       is_active: !!is_active,
+      ...numberScope,
     })
     .select()
     .single()

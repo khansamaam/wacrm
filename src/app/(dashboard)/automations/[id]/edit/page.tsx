@@ -42,6 +42,10 @@ export default function EditAutomationPage({
         trigger_config: body.automation.trigger_config ?? {},
         is_active: !!body.automation.is_active,
         steps: fromServerSteps((body.steps ?? []) as ServerStepNode[]),
+        // Present once migration 058 is applied; null = all numbers.
+        ...("whatsapp_number_id" in body.automation
+          ? { whatsapp_number_id: body.automation.whatsapp_number_id ?? null }
+          : {}),
       })
     }
     load()

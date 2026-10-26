@@ -22,6 +22,11 @@ import {
 } from '@/lib/whatsapp/template-webhook'
 import { processPendingCoexistenceEvents } from '@/lib/whatsapp/coexistence-sync'
 import { parseInboundReply } from '@/lib/whatsapp/inbound-reply'
+import {
+  collectWebhookTargets,
+  markWebhookReceived,
+  relayWebhookCopies,
+} from '@/lib/whatsapp/webhook-relay'
 
 // The `after()` callback in POST runs within this route's max duration.
 // Inbound processing can fan out to per-media Meta verification calls, so
@@ -127,6 +132,11 @@ async function loadWebhookSignatureSecrets(rawBody: string): Promise<string[]> {
   const candidates = new Set<string>()
   const legacySecret = process.env.META_APP_SECRET?.trim()
   if (legacySecret) candidates.add(legacySecret)
+  // Coexistence / Embedded Signup app (may differ from the legacy app).
+  // Template and account events carry no phone_number_id, so without this
+  // they would fail verification when only the coexistence app is used.
+  const coexistenceSecret = process.env.META_COEXISTENCE_APP_SECRET?.trim()
+  if (coexistenceSecret) candidates.add(coexistenceSecret)
 
   const phoneNumberIds = extractWebhookPhoneNumberIds(rawBody)
   if (phoneNumberIds.length === 0) return [...candidates]
@@ -300,6 +310,16 @@ export async function POST(request: Request) {
     } catch (error) {
       console.error('Error processing webhook:', error)
     }
+    // Bookkeeping + optional relay run after this app's own processing and
+    // never throw, so they cannot affect inbound handling.
+    const { phoneNumberIds } = collectWebhookTargets(body)
+    await markWebhookReceived(supabaseAdmin(), phoneNumberIds)
+    await relayWebhookCopies({
+      admin: supabaseAdmin(),
+      rawBody,
+      signature,
+      body,
+    })
   })
 
   return NextResponse.json({ status: 'received' }, { status: 200 })
@@ -1055,6 +1075,8 @@ async function processMessage(
       accountId,
       triggerType,
       contactId: contactRecord.id,
+      // Only automations of the number this message arrived on fire.
+      whatsappNumberId,
       context: {
         message_text: inboundText,
         conversation_id: conversation.id,

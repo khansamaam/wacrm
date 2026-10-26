@@ -642,6 +642,10 @@ function InboxPageInner() {
             onRefresh={handleManualRefresh}
             contactPanelOpen={contactPanelOpen}
             onToggleContactPanel={handleToggleContactPanel}
+            numberReadOnly={
+              numbers.find((n) => n.id === activeConversation?.whatsapp_number_id)
+                ?.my_access_level === 'view'
+            }
           />
         </div>
 
