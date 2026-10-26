@@ -230,6 +230,11 @@
       "unsupported": "[지원되지 않는 메시지 형식]",
       "aiBadge": "AI",
       "aiBadgeTitle": "AI 어시스턴트가 자동으로 전송함",
+      "imageViewHint": "클릭하여 확대 · 오른쪽 클릭으로 새 탭에서 열기",
+      "imageViewTitle": "이미지",
+      "imageOpenNewTab": "새 탭에서 열기",
+      "imageDownload": "다운로드",
+      "imageClose": "닫기",
       "deletedBadge": "삭제됨",
       "deletedBadgeTitle": "고객이 WhatsApp에서 모두에게서 이 메시지를 삭제했습니다"
     },

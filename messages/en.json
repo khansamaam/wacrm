@@ -230,6 +230,11 @@
       "unsupported": "[Unsupported message type]",
       "aiBadge": "AI",
       "aiBadgeTitle": "Sent automatically by the AI assistant",
+      "imageViewHint": "Click to enlarge · right-click to open in a new tab",
+      "imageViewTitle": "Image",
+      "imageOpenNewTab": "Open in new tab",
+      "imageDownload": "Download",
+      "imageClose": "Close",
       "deletedBadge": "Deleted",
       "deletedBadgeTitle": "The customer deleted this message for everyone in WhatsApp"
     },

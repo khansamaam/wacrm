@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { cn } from "@/lib/utils";
 import type { Message, MessageReaction } from "@/types";
 import {
@@ -18,12 +18,15 @@ import {
   ExternalLink,
   Copy,
   Trash2,
+  Download,
+  X,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ReplyQuote } from "./reply-quote";
 import { MessageReactions } from "./message-reactions";
 import { InteractivePreview } from "@/components/interactive/interactive-preview";
 import { useTranslations } from "next-intl";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
 interface MessageBubbleProps {
   message: Message;
@@ -85,9 +88,14 @@ function MediaUnavailable({ label, t }: { label: string, t: ReturnType<typeof us
 }
 
 function MediaImage({ url, alt }: { url: string; alt: string }) {
+  const t = useTranslations("Inbox.bubble");
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  // The blob URL currently held, so it can be released on change/unmount
+  // (reading `src` in the cleanup would see a stale value).
+  const blobUrlRef = useRef<string | null>(null);
 
   const loadImage = useCallback(async () => {
     if (!url) return;
@@ -99,6 +107,7 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
         if (!res.ok) throw new Error("Failed to load media");
         const blob = await res.blob();
         const blobUrl = URL.createObjectURL(blob);
+        blobUrlRef.current = blobUrl;
         setSrc(blobUrl);
       } catch {
         setError(true);
@@ -114,11 +123,11 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
   useEffect(() => {
     loadImage();
     return () => {
-      if (src?.startsWith("blob:")) {
-        URL.revokeObjectURL(src);
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = null;
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadImage]);
 
   if (error) {
@@ -137,13 +146,74 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
     );
   }
 
+  // `url` (not the blob) is the shareable address: the media proxy works in
+  // a new tab because it authenticates with the session cookie.
   return (
-    <img
-      src={src ?? ""}
-      alt={alt}
-      className="max-h-64 max-w-60 rounded-lg object-cover"
-      onError={() => setError(true)}
-    />
+    <>
+      <a
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        title={t("imageViewHint")}
+        className="block cursor-zoom-in"
+        onClick={(event) => {
+          // Plain left click opens the viewer; Ctrl/Cmd/Shift/middle click
+          // and the right-click menu keep the browser's own behaviour.
+          if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey) return;
+          event.preventDefault();
+          setViewerOpen(true);
+        }}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={src ?? ""}
+          alt={alt}
+          className="max-h-64 max-w-60 rounded-lg object-cover"
+          onError={() => setError(true)}
+        />
+      </a>
+      <Dialog open={viewerOpen} onOpenChange={setViewerOpen}>
+        <DialogContent
+          showCloseButton={false}
+          className="flex max-h-[95vh] w-auto max-w-[95vw] flex-col items-center gap-3 border-none bg-black/90 p-3 sm:max-w-[95vw]"
+        >
+          <DialogTitle className="sr-only">{alt || t("imageViewTitle")}</DialogTitle>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={src ?? ""}
+            alt={alt}
+            className="max-h-[80vh] max-w-[90vw] rounded object-contain"
+          />
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <a
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-md bg-white/10 px-3 py-1.5 text-xs font-medium text-white hover:bg-white/20"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              {t("imageOpenNewTab")}
+            </a>
+            <a
+              href={src ?? url}
+              download
+              className="inline-flex items-center gap-1.5 rounded-md bg-white/10 px-3 py-1.5 text-xs font-medium text-white hover:bg-white/20"
+            >
+              <Download className="h-3.5 w-3.5" />
+              {t("imageDownload")}
+            </a>
+            <button
+              type="button"
+              onClick={() => setViewerOpen(false)}
+              className="inline-flex items-center gap-1.5 rounded-md bg-white/10 px-3 py-1.5 text-xs font-medium text-white hover:bg-white/20"
+            >
+              <X className="h-3.5 w-3.5" />
+              {t("imageClose")}
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
