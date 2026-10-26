@@ -41,6 +41,11 @@ interface WebhookStatus {
   migration_hint: string | null;
 }
 
+type HistorySyncResults = Record<
+  'history' | 'contacts',
+  { ok: boolean; request_id?: string; error?: string }
+>;
+
 const TARGET_LABEL: Record<string, string> = {
   this_app: 'Receiving in this app',
   elsewhere: 'Points to another system',
@@ -60,6 +65,7 @@ export function WhatsAppNumberWebhookDialog({
   const [busy, setBusy] = useState(false);
   const [relayEnabled, setRelayEnabled] = useState(false);
   const [relayUrl, setRelayUrl] = useState('');
+  const [historyResult, setHistoryResult] = useState<HistorySyncResults | null>(null);
 
   const load = useCallback(async (id: string) => {
     setLoading(true);
@@ -86,6 +92,7 @@ export function WhatsAppNumberWebhookDialog({
   useEffect(() => {
     if (number) {
       setStatus(null);
+      setHistoryResult(null);
       void load(number.id);
     }
   }, [number, load]);
@@ -112,6 +119,32 @@ export function WhatsAppNumberWebhookDialog({
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : 'Failed to route webhooks'
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function requestHistory() {
+    if (!number) return;
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/whatsapp/numbers/${number.id}/history-sync`, {
+        method: 'POST',
+      });
+      const body = await readJson(response);
+      if (!response.ok)
+        throw new Error(readError(body, 'Failed to request chat history'));
+      const results = body.results as unknown as HistorySyncResults;
+      setHistoryResult(results);
+      if (results.history.ok) {
+        toast.success('Meta accepted the request — chats will appear in the inbox as they arrive');
+      } else {
+        toast.error('Meta did not accept the chat history request');
+      }
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : 'Failed to request chat history'
       );
     } finally {
       setBusy(false);
@@ -224,6 +257,47 @@ export function WhatsAppNumberWebhookDialog({
                 </Button>
               )}
             </section>
+
+            {number?.connection_method === 'coexistence' && (
+              <section className="space-y-3 border-t pt-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <Label>Import chat history from the phone</Label>
+                    <p className="text-muted-foreground text-xs">
+                      Asks Meta to send the WhatsApp Business App chats (up to
+                      6 months) and contacts. Meta only allows this within 24
+                      hours of connecting the number, and only if history
+                      sharing was approved on the phone.
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => void requestHistory()}
+                  >
+                    Request history
+                  </Button>
+                </div>
+                {historyResult && (
+                  <ul className="space-y-1 text-xs">
+                    {(['history', 'contacts'] as const).map((kind) => (
+                      <li key={kind}>
+                        <span className="font-medium">
+                          {kind === 'history' ? 'Chats' : 'Contacts'}:
+                        </span>{' '}
+                        {historyResult[kind].ok ? (
+                          <span className="text-emerald-600">accepted by Meta</span>
+                        ) : (
+                          <span className="text-destructive">
+                            {historyResult[kind].error ?? 'not accepted'}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            )}
 
             <section className="space-y-3 border-t pt-4">
               <div className="flex items-center justify-between gap-4">
