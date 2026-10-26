@@ -1791,5 +1791,17 @@
       "reindexTooltip": "모든 문서를 다시 임베딩합니다 (예: 임베딩 키 추가 후)",
       "loading": "불러오는 중…"
     }
+  },
+  "DesktopNotifications": {
+    "promptText": "고객이 WhatsApp 메시지를 보내면 데스크톱 알림을 받으세요.",
+    "enable": "알림 켜기",
+    "notNow": "나중에",
+    "settingsTitle": "데스크톱 알림",
+    "settingsDesc": "새 고객 메시지에 대해 브라우저 알림을 표시합니다. 클릭하면 채팅이 열립니다.",
+    "statusOn": "이 브라우저에서 켜짐.",
+    "statusOff": "이 브라우저에서 꺼짐.",
+    "statusNotAllowed": "이 브라우저에서 아직 켜지지 않음.",
+    "statusBlocked": "브라우저에서 차단됨. 브라우저 사이트 설정에서 이 사이트의 알림을 허용하세요.",
+    "statusUnsupported": "이 브라우저는 알림을 지원하지 않습니다."
   }
 }

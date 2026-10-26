@@ -6,6 +6,10 @@ import { AuthProvider, useAuth } from '@/hooks/use-auth';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
 import { PresenceHeartbeat } from '@/components/presence/presence-heartbeat';
+import {
+  DesktopMessageNotifier,
+  DesktopNotificationsPrompt,
+} from '@/components/notifications/desktop-message-notifier';
 import { firstAccessibleHref, moduleForPath } from '@/lib/auth/module-access';
 
 // Auth-gated dashboard shell. Extracted from the layout so the layout
@@ -64,8 +68,11 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
       {/* Reports this tab's online/away presence once we know a user is
           signed in. Headless — renders nothing. */}
       <PresenceHeartbeat />
+      {/* Browser notifications for new customer messages. Headless. */}
+      <DesktopMessageNotifier />
       <Sidebar open={sidebarOpen} onClose={closeSidebar} />
       <div className="flex flex-1 flex-col overflow-hidden">
+        <DesktopNotificationsPrompt />
         <Header onOpenSidebar={() => setSidebarOpen(true)} />
         {/* Thinner horizontal padding on mobile so cards have room to breathe. */}
         <main className="flex-1 overflow-y-auto p-4 sm:p-6">{children}</main>

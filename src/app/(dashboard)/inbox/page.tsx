@@ -16,6 +16,7 @@ import { ContactSidebar } from "@/components/inbox/contact-sidebar";
 import { WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useWhatsAppNumbers } from '@/hooks/use-whatsapp-numbers';
+import { OPEN_CONVERSATION_EVENT } from '@/lib/desktop-notifications';
 import { WhatsAppNumberFilter } from '@/components/whatsapp/number-filter';
 import { useAuth } from "@/hooks/use-auth";
 
@@ -494,6 +495,44 @@ function InboxPageInner() {
     },
     [activeConversation?.id, router]
   );
+
+  // Open a conversation by id from outside the list (desktop
+  // notification click). Works when the thread isn't in the loaded page
+  // or belongs to a number the filter hides: the filter switches to "All
+  // numbers" and the row is fetched and selected directly.
+  const openConversationById = useCallback(
+    async (convId: string) => {
+      if (activeConversation?.id === convId) return;
+      const supabase = createClient();
+      const { data } = await supabase
+        .from("conversations")
+        .select(CONVERSATION_SELECT)
+        .eq("id", convId)
+        .maybeSingle();
+      if (!data) return;
+      const conv = normalizeConversation(data);
+      if (selectedNumberId && conv.whatsapp_number_id !== selectedNumberId) {
+        setSelectedNumberId(null);
+      }
+      setConversations((prev) =>
+        prev.some((c) => c.id === conv.id) ? prev : [conv, ...prev],
+      );
+      handleSelectConversation(conv);
+    },
+    [activeConversation?.id, selectedNumberId, setSelectedNumberId, handleSelectConversation],
+  );
+  const openConversationByIdRef = useRef(openConversationById);
+  useEffect(() => {
+    openConversationByIdRef.current = openConversationById;
+  });
+  useEffect(() => {
+    const onOpen = (event: Event) => {
+      const convId = (event as CustomEvent<string>).detail;
+      if (typeof convId === "string") void openConversationByIdRef.current(convId);
+    };
+    window.addEventListener(OPEN_CONVERSATION_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_CONVERSATION_EVENT, onOpen);
+  }, []);
 
   // Mobile "back" — deselect the conversation so the list pane comes
   // back. Also clears the ?c= param so a refresh lands on the list

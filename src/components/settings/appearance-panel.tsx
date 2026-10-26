@@ -6,6 +6,7 @@ import { useTheme } from "@/hooks/use-theme";
 import { MODES, THEMES, type Mode, type ThemeId } from "@/lib/themes";
 import { cn } from "@/lib/utils";
 import { useTranslations } from "next-intl";
+import { DesktopNotificationsSetting } from "./desktop-notifications-setting";
 import { SettingsPanelHead } from "./settings-panel-head";
 
 /**
@@ -72,6 +73,9 @@ export function AppearancePanel() {
             />
           ))}
         </div>
+      </div>
+      <div className="mt-8">
+        <DesktopNotificationsSetting />
       </div>
     </section>
   );

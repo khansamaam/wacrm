@@ -1793,5 +1793,17 @@
       "reindexTooltip": "Re-embed all documents (e.g. after adding an embeddings key)",
       "loading": "Loading…"
     }
+  },
+  "DesktopNotifications": {
+    "promptText": "Get a desktop notification when a customer sends a WhatsApp message.",
+    "enable": "Enable notifications",
+    "notNow": "Not now",
+    "settingsTitle": "Desktop notifications",
+    "settingsDesc": "Show a browser notification for new customer messages. Click it to open the chat.",
+    "statusOn": "On in this browser.",
+    "statusOff": "Off in this browser.",
+    "statusNotAllowed": "Not enabled yet in this browser.",
+    "statusBlocked": "Blocked by your browser. Allow notifications for this site in the browser's site settings.",
+    "statusUnsupported": "This browser does not support notifications."
   }
 }
