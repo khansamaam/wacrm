@@ -1804,6 +1804,11 @@
     "statusOff": "Off in this browser.",
     "statusNotAllowed": "Not enabled yet in this browser.",
     "statusBlocked": "Blocked by your browser. Allow notifications for this site in the browser's site settings.",
-    "statusUnsupported": "This browser does not support notifications."
+    "statusUnsupported": "This browser does not support notifications.",
+    "testButton": "Send test notification",
+    "testTitle": "wacrm test",
+    "testBody": "Notifications are working on this computer.",
+    "testHint": "No pop-up? Check Windows notification settings and Focus assist for your browser.",
+    "testFailed": "The browser refused to show a notification. Check its site settings."
   }
 }

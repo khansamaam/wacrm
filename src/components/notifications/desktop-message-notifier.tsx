@@ -46,6 +46,9 @@ interface ConversationInfo {
 export function DesktopMessageNotifier() {
   const router = useRouter()
   const { user } = useAuth()
+  // Subscribe per user id, not per user object: the auth provider swaps
+  // the object on every session event (initial load, token refresh).
+  const userId = user?.id ?? null
   const { numbers, selectedNumberId, setSelectedNumberId } = useWhatsAppNumbers()
 
   // Latest values for the long-lived realtime callback.
@@ -56,7 +59,7 @@ export function DesktopMessageNotifier() {
   const conversationCache = useRef(new Map<string, ConversationInfo>())
 
   useEffect(() => {
-    if (!user || notificationPermission() === 'unsupported') return
+    if (!userId || notificationPermission() === 'unsupported') return
     const supabase = createClient()
 
     const loadConversation = async (convId: string): Promise<ConversationInfo> => {
@@ -128,8 +131,12 @@ export function DesktopMessageNotifier() {
       }
     }
 
+    // Unique topic per subscription: supabase-js hands back an existing
+    // channel with the same topic, which could be the one still being
+    // removed by the previous cleanup — leaving nothing subscribed.
+    const topic = `desktop-notify-${userId}-${Math.random().toString(36).slice(2)}`
     const channel = supabase
-      .channel(`desktop-notify-${user.id}`)
+      .channel(topic)
       .on(
         'postgres_changes',
         {
@@ -140,12 +147,18 @@ export function DesktopMessageNotifier() {
         },
         (payload) => void onInsert(payload.new as InboundMessageRow),
       )
-      .subscribe()
+      .subscribe((status, error) => {
+        if (status === 'SUBSCRIBED') {
+          console.info('[desktop notifications] listening for new messages')
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('[desktop notifications] realtime subscription problem:', status, error)
+        }
+      })
 
     return () => {
       void supabase.removeChannel(channel)
     }
-  }, [user])
+  }, [userId])
 
   return null
 }

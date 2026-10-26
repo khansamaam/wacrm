@@ -10,6 +10,7 @@ import {
   notificationPermission,
   requestNotificationPermission,
   setDesktopNotificationsEnabled,
+  showTestNotification,
   type NotificationPermissionState,
 } from '@/lib/desktop-notifications'
 import { Button } from '@/components/ui/button'
@@ -66,6 +67,22 @@ export function DesktopNotificationsSetting() {
           </Button>
         ) : null}
       </div>
+      {permission === 'granted' && (
+        <div className="flex max-w-md items-center gap-3">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              if (!showTestNotification(t('testTitle'), t('testBody'))) {
+                window.alert(t('testFailed'))
+              }
+            }}
+          >
+            {t('testButton')}
+          </Button>
+          <p className="text-muted-foreground text-xs">{t('testHint')}</p>
+        </div>
+      )}
     </div>
   )
 }

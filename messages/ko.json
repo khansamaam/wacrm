@@ -1802,6 +1802,11 @@
     "statusOff": "이 브라우저에서 꺼짐.",
     "statusNotAllowed": "이 브라우저에서 아직 켜지지 않음.",
     "statusBlocked": "브라우저에서 차단됨. 브라우저 사이트 설정에서 이 사이트의 알림을 허용하세요.",
-    "statusUnsupported": "이 브라우저는 알림을 지원하지 않습니다."
+    "statusUnsupported": "이 브라우저는 알림을 지원하지 않습니다.",
+    "testButton": "테스트 알림 보내기",
+    "testTitle": "wacrm 테스트",
+    "testBody": "이 컴퓨터에서 알림이 작동합니다.",
+    "testHint": "팝업이 없나요? 브라우저의 Windows 알림 설정과 집중 지원을 확인하세요.",
+    "testFailed": "브라우저가 알림 표시를 거부했습니다. 사이트 설정을 확인하세요."
   }
 }

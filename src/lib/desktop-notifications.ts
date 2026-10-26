@@ -64,6 +64,26 @@ export async function requestNotificationPermission(): Promise<NotificationPermi
   return result
 }
 
+/** Show a sample notification (Settings test button). */
+export function showTestNotification(title: string, body: string): boolean {
+  if (notificationPermission() !== 'granted') return false
+  try {
+    const notification = new Notification(title, {
+      body,
+      icon: '/icon.png',
+      tag: 'wacrm-test',
+    })
+    notification.onclick = () => {
+      window.focus()
+      notification.close()
+    }
+    return true
+  } catch (error) {
+    console.warn('[desktop notifications] test notification failed:', error)
+    return false
+  }
+}
+
 const MEDIA_PREVIEW: Record<string, string> = {
   image: '📷 Photo',
   video: '🎥 Video',
