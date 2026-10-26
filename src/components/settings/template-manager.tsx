@@ -218,6 +218,10 @@ export function TemplateManager() {
   // submit handler from POST /submit to PATCH /[id] and changes the
   // dialog title + CTA. Set to the template id to pre-fill from a row.
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Set while resubmitting a DRAFT (a submission Meta rejected): the
+  // dialog is pre-filled but saves through POST /submit, which updates the
+  // same row. Holds the number whose WABA the draft belongs to.
+  const [draftNumberId, setDraftNumberId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   // Template selected for the confirm-delete dialog. The destructive
   // action goes through this two-step so a slip on the trash icon
@@ -324,12 +328,13 @@ export function TemplateManager() {
                 : undefined,
             }))
           : undefined,
-      whatsapp_number_id: templateNumberId,
+      whatsapp_number_id: draftNumberId ?? templateNumberId,
     };
   }
 
   function openEdit(template: MessageTemplate) {
     setEditingId(template.id);
+    setDraftNumberId(null);
     setForm({
       template_type: template.template_type ?? 'standard',
       name: template.name,
@@ -350,8 +355,19 @@ export function TemplateManager() {
     setDialogOpen(true);
   }
 
+  /** Re-open a DRAFT whose submission failed, with its saved content. */
+  function openDraft(template: MessageTemplate) {
+    openEdit(template);
+    setEditingId(null);
+    setDraftNumberId(
+      numbers.find((number) => number.waba_id && number.waba_id === template.waba_id)?.id ??
+        templateNumberId
+    );
+  }
+
   function openCreate() {
     setEditingId(null);
+    setDraftNumberId(null);
     setForm({
       ...emptyForm,
       carousel_cards: [emptyCarouselCard(), emptyCarouselCard()],
@@ -758,6 +774,19 @@ export function TemplateManager() {
                       >
                         <Pencil className="size-3.5" />
                         {t('edit')}
+                      </Button>
+                    )}
+                    {statusKey === 'DRAFT' && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openDraft(template)}
+                        title={t('resubmitTitle')}
+                        aria-label={t('resubmitLabel')}
+                        className="text-muted-foreground hover:text-primary hover:bg-primary/10 h-8 px-2"
+                      >
+                        <RotateCcw className="size-3.5" />
+                        {t('resubmit')}
                       </Button>
                     )}
                     {(statusKey === 'REJECTED' || statusKey === 'PAUSED') && (
