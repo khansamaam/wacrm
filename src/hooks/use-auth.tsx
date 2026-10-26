@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { clearWhatsAppNumbersCache } from '@/lib/whatsapp/numbers-client-cache';
 import type { User } from '@supabase/supabase-js';
 import { DEFAULT_CURRENCY } from '@/lib/currency';
 import {
@@ -339,6 +340,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(async () => {
     const supabase = createClient();
     await supabase.auth.signOut();
+    clearWhatsAppNumbersCache();
     setUser(null);
     setProfile(null);
     setAccount(null);

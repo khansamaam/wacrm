@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { createClient } from '@/lib/supabase/client'
-import { loadWhatsAppNumbers } from '@/lib/whatsapp/numbers-client-cache'
+import { loadWhatsAppNumbers, peekWhatsAppNumbers } from '@/lib/whatsapp/numbers-client-cache'
+import type { WhatsAppNumber } from '@/types'
 
 export interface WhatsAppConnectionStatus {
   loading: boolean
@@ -39,19 +40,7 @@ export function useWhatsAppConnectionStatus(
     if (!accountId) return Promise.resolve()
 
     return loadWhatsAppNumbers({ force })
-      .then((numbers) => {
-        const connected = numbers.filter((number) => number.status === 'connected')
-        const primary = connected.find((number) => number.is_default) ?? connected[0] ?? numbers[0]
-        setStatus({
-          loading: false,
-          configured: numbers.length > 0,
-          connected: connected.length > 0,
-          connectedCount: connected.length,
-          totalCount: numbers.length,
-          phoneNumber: primary?.display_phone_number || primary?.phone_number_id || null,
-          numberKind: primary?.display_phone_number ? 'display' : primary ? 'id' : null,
-        })
-      })
+      .then((numbers) => setStatus(summarize(numbers)))
       .catch((error) => {
         console.warn('[sidebar] Could not load WhatsApp status:', error)
         setStatus((current) => ({ ...current, loading: false }))
@@ -61,6 +50,9 @@ export function useWhatsAppConnectionStatus(
   useEffect(() => {
     if (!accountId) return
 
+    // Last known status first, so the sidebar card doesn't flash empty.
+    const known = peekWhatsAppNumbers()
+    if (known) Promise.resolve().then(() => setStatus(summarize(known)))
     void refresh()
 
     const supabase = createClient()
@@ -84,4 +76,18 @@ export function useWhatsAppConnectionStatus(
   }, [accountId, refresh])
 
   return status
+}
+
+function summarize(numbers: WhatsAppNumber[]): WhatsAppConnectionStatus {
+  const connected = numbers.filter((number) => number.status === 'connected')
+  const primary = connected.find((number) => number.is_default) ?? connected[0] ?? numbers[0]
+  return {
+    loading: false,
+    configured: numbers.length > 0,
+    connected: connected.length > 0,
+    connectedCount: connected.length,
+    totalCount: numbers.length,
+    phoneNumber: primary?.display_phone_number || primary?.phone_number_id || null,
+    numberKind: primary?.display_phone_number ? 'display' : primary ? 'id' : null,
+  }
 }

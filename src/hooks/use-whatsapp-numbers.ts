@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import { loadWhatsAppNumbers } from '@/lib/whatsapp/numbers-client-cache'
+import { loadWhatsAppNumbers, peekWhatsAppNumbers } from '@/lib/whatsapp/numbers-client-cache'
 import type { WhatsAppNumber } from '@/types'
 
 const STORAGE_KEY = 'wacrm:selected-whatsapp-number'
@@ -42,6 +42,16 @@ export function useWhatsAppNumbers() {
 
   useEffect(() => {
     let cancelled = false
+    // Show the last known list straight away (badges, number dropdown),
+    // then replace it with the fresh one below.
+    const known = peekWhatsAppNumbers()
+    if (known) {
+      Promise.resolve().then(() => {
+        if (cancelled) return
+        setNumbers(known)
+        setLoading(false)
+      })
+    }
     void loadWhatsAppNumbers()
       .then((list) => {
         if (!cancelled) setNumbers(list)
