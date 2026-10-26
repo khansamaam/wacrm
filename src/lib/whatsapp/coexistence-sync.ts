@@ -324,12 +324,24 @@ async function persistImportedMessage(
     { requireWhatsAppConfig: false, whatsappNumberId },
   )
 
+  // Photos, videos, voice notes and documents sent from the Business App
+  // carry a Meta media id; serve them through the same authenticated
+  // proxy as inbound media (the bytes stay on Meta until viewed).
+  const mediaId = readMediaId(message.raw, message.contentType)
+  const mediaUrl = mediaId
+    ? `/api/whatsapp/media/${encodeURIComponent(mediaId)}?number=${encodeURIComponent(whatsappNumberId)}`
+    : null
+  const isPlaceholder = message.content === `[${message.contentType}]`
+
   const { error } = await db.from('messages').insert({
     conversation_id: resolved.conversationId,
     whatsapp_number_id: whatsappNumberId,
     message_id: message.messageId,
     sender_type: message.senderType === 'contact' ? 'customer' : 'agent',
-    content_text: message.content,
+    // With media attached the "[image]" placeholder is redundant; keep a
+    // real caption only (same as inbound media in the webhook).
+    content_text: mediaUrl && isPlaceholder ? null : message.content,
+    media_url: mediaUrl,
     content_type: normalizeContentType(message.contentType),
     message_origin: message.origin,
     status: message.status,
@@ -433,6 +445,16 @@ function readContent(message: JsonRecord, type: string): string {
     if (typeof typed.name === 'string') return typed.name
   }
   return `[${type}]`
+}
+
+const MEDIA_TYPES = new Set(['image', 'video', 'audio', 'document', 'sticker'])
+
+/** Meta media id of a media message (`message[type].id`), if any. */
+function readMediaId(message: JsonRecord, type: string): string | null {
+  if (!MEDIA_TYPES.has(type)) return null
+  const typed = message[type]
+  if (isRecord(typed) && typeof typed.id === 'string' && typed.id) return typed.id
+  return null
 }
 
 function readPhone(value: JsonRecord, keys: string[]): string | null {
