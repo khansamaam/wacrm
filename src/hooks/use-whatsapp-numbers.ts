@@ -5,6 +5,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { WhatsAppNumber } from '@/types'
 
 const STORAGE_KEY = 'wacrm:selected-whatsapp-number'
+/** Same-tab broadcast so every mounted hook (sidebar switcher, inbox,
+ *  dashboard, …) follows a selection change immediately. Other tabs are
+ *  covered by the native `storage` event. */
+const CHANGE_EVENT = 'wacrm:selected-whatsapp-number-change'
 
 /** Accessible number list plus a workspace-wide, browser-persisted filter. */
 export function useWhatsAppNumbers() {
@@ -18,6 +22,20 @@ export function useWhatsAppNumbers() {
       if (stored) Promise.resolve().then(() => setSelectedState(stored))
     } catch {
       // Storage is optional (private/sandboxed browsers may reject access).
+    }
+
+    const onChange = (event: Event) => {
+      const detail = (event as CustomEvent<string | null>).detail
+      setSelectedState(detail ?? null)
+    }
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === STORAGE_KEY) setSelectedState(event.newValue)
+    }
+    window.addEventListener(CHANGE_EVENT, onChange)
+    window.addEventListener('storage', onStorage)
+    return () => {
+      window.removeEventListener(CHANGE_EVENT, onChange)
+      window.removeEventListener('storage', onStorage)
     }
   }, [])
 
@@ -44,6 +62,7 @@ export function useWhatsAppNumbers() {
       if (id) window.localStorage.setItem(STORAGE_KEY, id)
       else window.localStorage.removeItem(STORAGE_KEY)
     } catch {}
+    window.dispatchEvent(new CustomEvent(CHANGE_EVENT, { detail: id }))
   }, [])
 
   const selectedNumber = useMemo(

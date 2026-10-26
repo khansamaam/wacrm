@@ -19,11 +19,18 @@ export function WhatsAppNumberFilter({
   className?: string
 }) {
   if (numbers.length <= 1) return null
+  const selected = numbers.find((number) => number.id === value) ?? null
   return (
     <Select value={value ?? '__all__'} onValueChange={(next) => onChange(next === '__all__' ? null : next)}>
       <SelectTrigger className={className ?? 'w-[220px]'}>
         <Smartphone className="mr-2 size-4" />
-        <SelectValue />
+        {/* Render the label explicitly: without it the trigger shows the
+            raw value, i.e. the number's internal uuid. */}
+        <SelectValue>
+          {selected
+            ? `${selected.label} · ${selected.display_phone_number || selected.phone_number_id}`
+            : 'All numbers'}
+        </SelectValue>
       </SelectTrigger>
       <SelectContent>
         {allowAll && <SelectItem value="__all__">All numbers</SelectItem>}
