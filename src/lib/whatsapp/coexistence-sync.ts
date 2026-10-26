@@ -338,10 +338,27 @@ async function persistImportedMessage(
   if (error?.code === '23505') return
   if (error) throw new Error(`Unable to import coexistence message: ${error.message}`)
 
+  // Keep the inbox preview in step with Business App echoes / history, but
+  // only move it forward: an older history message must not replace a
+  // newer preview or push the thread down the list.
+  const { data: current } = await db
+    .from('conversations')
+    .select('last_message_at')
+    .eq('id', resolved.conversationId)
+    .maybeSingle()
+  const currentAt = current?.last_message_at
+    ? Date.parse(current.last_message_at as string)
+    : Number.NEGATIVE_INFINITY
+  const messageAt = Date.parse(message.timestamp)
+  if (!Number.isNaN(messageAt) && messageAt < currentAt) return
+
   await db
     .from('conversations')
     .update({
       last_message_at: message.timestamp,
+      last_message_text:
+        message.content?.trim() ||
+        `[${normalizeContentType(message.contentType)}]`,
       updated_at: new Date().toISOString(),
     })
     .eq('id', resolved.conversationId)
