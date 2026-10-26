@@ -30,6 +30,8 @@ export async function ingestDocument(
   config: Pick<AiConfig, 'embeddingsApiKey'>,
   documentId: string,
   content: string,
+  /** The document's WhatsApp number (migration 062), copied to chunks. */
+  whatsappNumberId: string | null = null,
 ): Promise<void> {
   const chunks = chunkText(content)
 
@@ -64,9 +66,19 @@ export async function ingestDocument(
     chunk_index: i,
     content,
     embedding: embeddings ? toVectorLiteral(embeddings[i]) : null,
+    ...(whatsappNumberId ? { whatsapp_number_id: whatsappNumberId } : {}),
   }))
 
-  const { error: insErr } = await db.from('ai_knowledge_chunks').insert(rows)
+  let { error: insErr } = await db.from('ai_knowledge_chunks').insert(rows)
+  if (insErr && whatsappNumberId && isMissingColumn(insErr)) {
+    // Migration 062 not applied yet: store unscoped chunks.
+    ;({ error: insErr } = await db.from('ai_knowledge_chunks').insert(
+      rows.map(({ whatsapp_number_id: _omit, ...rest }) => {
+        void _omit
+        return rest
+      }),
+    ))
+  }
   if (insErr) throw insErr
 
   if (embedError) throw embedError
@@ -87,6 +99,9 @@ export async function retrieveKnowledge(
   config: Pick<AiConfig, 'embeddingsApiKey'>,
   queryText: string,
   k = 5,
+  /** Number the conversation is on (migration 062): only its chunks and
+   *  account-wide (unscoped) chunks are searched. */
+  whatsappNumberId: string | null = null,
 ): Promise<string[]> {
   const query = queryText.trim()
   if (!query || k <= 0) return []
@@ -96,10 +111,19 @@ export async function retrieveKnowledge(
   // just to get []. One cheap indexed COUNT (head, no rows) instead of a
   // paid embeddings call on the hot path.
   try {
-    const { count, error } = await db
-      .from('ai_knowledge_chunks')
-      .select('id', { count: 'exact', head: true })
-      .eq('account_id', accountId)
+    const countQuery = () =>
+      db
+        .from('ai_knowledge_chunks')
+        .select('id', { count: 'exact', head: true })
+        .eq('account_id', accountId)
+    let { count, error } = whatsappNumberId
+      ? await countQuery().or(
+          `whatsapp_number_id.is.null,whatsapp_number_id.eq.${whatsappNumberId}`,
+        )
+      : await countQuery()
+    if (error && whatsappNumberId && isMissingColumn(error)) {
+      ;({ count, error } = await countQuery())
+    }
     if (error || !count) return []
   } catch {
     return []
@@ -112,11 +136,11 @@ export async function retrieveKnowledge(
     try {
       const [queryEmbedding] = await embedTexts(config.embeddingsApiKey, [query])
       if (queryEmbedding) {
-        const { data, error } = await db.rpc('match_ai_knowledge_semantic', {
+        const { data, error } = await matchRpc(db, 'match_ai_knowledge_semantic', {
           p_account_id: accountId,
           p_query_embedding: toVectorLiteral(queryEmbedding),
           p_match_count: k,
-        })
+        }, whatsappNumberId)
         if (!error && Array.isArray(data)) {
           for (const row of data as MatchRow[]) picked.set(row.id, row.content)
         }
@@ -129,11 +153,11 @@ export async function retrieveKnowledge(
   // Lexical top-up (also the sole path when there's no embeddings key).
   if (picked.size < k) {
     try {
-      const { data, error } = await db.rpc('match_ai_knowledge_fts', {
+      const { data, error } = await matchRpc(db, 'match_ai_knowledge_fts', {
         p_account_id: accountId,
         p_query: query,
         p_match_count: k,
-      })
+      }, whatsappNumberId)
       if (!error && Array.isArray(data)) {
         for (const row of data as MatchRow[]) {
           if (picked.size >= k) break
@@ -146,4 +170,26 @@ export async function retrieveKnowledge(
   }
 
   return Array.from(picked.values()).slice(0, k)
+}
+
+function isMissingColumn(error: { code?: string } | null): boolean {
+  return error?.code === '42703' || error?.code === 'PGRST204'
+}
+
+/**
+ * Call a match RPC scoped to a WhatsApp number (4-argument version from
+ * migration 062), falling back to the account-wide 3-argument version
+ * when there is no number or the migration is not applied yet.
+ */
+async function matchRpc(
+  db: SupabaseClient,
+  fn: 'match_ai_knowledge_semantic' | 'match_ai_knowledge_fts',
+  args: Record<string, unknown>,
+  whatsappNumberId: string | null,
+) {
+  if (whatsappNumberId) {
+    const scoped = await db.rpc(fn, { ...args, p_whatsapp_number_id: whatsappNumberId })
+    if (!scoped.error || scoped.error.code !== 'PGRST202') return scoped
+  }
+  return db.rpc(fn, args)
 }

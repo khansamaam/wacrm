@@ -9,6 +9,33 @@ import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
 import { validateAiCredentials } from '@/lib/ai/validate'
 import { embedTexts } from '@/lib/ai/embeddings'
 import { AiError, type AiProvider } from '@/lib/ai/types'
+import { resolveAiNumberScope, selectAiConfigRow } from '@/lib/ai/config'
+import {
+  assertNumberWriteAccess,
+  NumberWriteAccessError,
+} from '@/lib/whatsapp/number-access'
+
+interface NumberScopable {
+  eq(column: string, value: string): unknown
+  is(column: string, value: null): unknown
+}
+
+/** Restrict a query to the config row of `numberId` (null = account-wide).
+ *  Typed loosely on purpose: PostgREST builder generics are too deep for a
+ *  generic constraint here. */
+function scopeToNumber<Q>(query: Q, numberId: string | null): Q {
+  const q = query as unknown as NumberScopable
+  return (numberId
+    ? q.eq('whatsapp_number_id', numberId)
+    : q.is('whatsapp_number_id', null)) as Q
+}
+
+interface ConfigRowForRead {
+  api_key?: string | null
+  embeddings_api_key?: string | null
+  whatsapp_number_id?: string | null
+  [key: string]: unknown
+}
 
 function bad(message: string) {
   return NextResponse.json({ error: message }, { status: 400 })
@@ -21,19 +48,29 @@ function bad(message: string) {
  * whether AI is set up. The encrypted key is NEVER returned — only a
  * `has_key` flag; the settings form shows a masked placeholder.
  */
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const { supabase, accountId } = await getCurrentAccount()
 
-    const { data, error } = await supabase
-      .from('ai_configs')
-      // `api_key` is selected only to derive `has_key` — it is stripped
-      // out below and never returned to the client.
-      .select(
-        'provider, model, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, api_key, embeddings_api_key',
-      )
-      .eq('account_id', accountId)
-      .maybeSingle()
+    // AI settings are per WhatsApp number (migration 062). With
+    // ?whatsapp_number_id= this returns the config that applies to that
+    // number: its own, else the account-wide one (`scope` says which).
+    const scope = await resolveAiNumberScope(
+      supabase,
+      accountId,
+      new URL(request.url).searchParams.get('whatsapp_number_id'),
+    )
+    if (!scope.ok) return bad(scope.error)
+
+    // `api_key` is selected only to derive `has_key` — it is stripped
+    // out below and never returned to the client.
+    const { data: row, error } = await selectAiConfigRow<ConfigRowForRead>(
+      supabase,
+      accountId,
+      'provider, model, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, api_key, embeddings_api_key',
+      scope.numberId,
+    )
+    const data = row
 
     if (error) {
       console.error('[ai/config GET] fetch error:', error)
@@ -51,6 +88,7 @@ export async function GET() {
       configured: true,
       has_key: !!api_key,
       has_embeddings_key: !!embeddings_api_key,
+      scope: data.whatsapp_number_id ? 'number' : 'account',
       ...safe,
     })
   } catch (err) {
@@ -69,13 +107,28 @@ export async function GET() {
  */
 export async function POST(request: Request) {
   try {
-    const { supabase, accountId, userId } = await requireRole('admin')
+    const ctx = await requireRole('admin')
+    const { supabase, accountId, userId } = ctx
 
     const limit = checkRateLimit(`ai-config:${userId}`, RATE_LIMITS.adminAction)
     if (!limit.success) return rateLimitResponse(limit)
 
     const body = await request.json().catch(() => null)
     if (!body || typeof body !== 'object') return bad('Invalid request body')
+
+    // Saves the config of one WhatsApp number (migration 062), or the
+    // account-wide config when no number is given.
+    const scope = await resolveAiNumberScope(supabase, accountId, body.whatsapp_number_id)
+    if (!scope.ok) return bad(scope.error)
+    const numberId = scope.numberId
+    try {
+      await assertNumberWriteAccess({ ...ctx, numberId })
+    } catch (error) {
+      if (error instanceof NumberWriteAccessError) {
+        return NextResponse.json({ error: error.message }, { status: 403 })
+      }
+      throw error
+    }
 
     const provider = body.provider as AiProvider
     if (provider !== 'openai' && provider !== 'anthropic') {
@@ -126,11 +179,13 @@ export async function POST(request: Request) {
     const clearEmbeddingsKey = body.embeddings_api_key === null
 
     // Reuse the stored key when the form didn't send a fresh one.
-    const { data: existing } = await supabase
-      .from('ai_configs')
-      .select('id, provider, model, api_key')
-      .eq('account_id', accountId)
-      .maybeSingle()
+    const { data: existing } = await scopeToNumber(
+      supabase
+        .from('ai_configs')
+        .select('id, provider, model, api_key')
+        .eq('account_id', accountId),
+      numberId,
+    ).maybeSingle()
 
     let apiKeyPlain: string
     if (rawKey) {
@@ -219,6 +274,7 @@ export async function POST(request: Request) {
       const { error: upErr } = await supabase
         .from('ai_configs')
         .update(encryptedKey ? { ...shared, api_key: encryptedKey } : shared)
+        .eq('id', existing.id)
         .eq('account_id', accountId)
       if (upErr) {
         console.error('[ai/config POST] update error:', upErr)
@@ -232,6 +288,7 @@ export async function POST(request: Request) {
         account_id: accountId,
         created_by: userId,
         api_key: encryptedKey, // guaranteed non-null: rawKey required when no existing row
+        ...(numberId ? { whatsapp_number_id: numberId } : {}),
         ...shared,
       })
       if (insErr) {
@@ -255,13 +312,28 @@ export async function POST(request: Request) {
  * Removes the account's AI config (turns everything off and forgets the
  * key). Also used to recover from a corrupted encrypted key.
  */
-export async function DELETE() {
+export async function DELETE(request: Request) {
   try {
-    const { supabase, accountId } = await requireRole('admin')
-    const { error } = await supabase
-      .from('ai_configs')
-      .delete()
-      .eq('account_id', accountId)
+    const ctx = await requireRole('admin')
+    const { supabase, accountId } = ctx
+    const scope = await resolveAiNumberScope(
+      supabase,
+      accountId,
+      new URL(request.url).searchParams.get('whatsapp_number_id'),
+    )
+    if (!scope.ok) return bad(scope.error)
+    try {
+      await assertNumberWriteAccess({ ...ctx, numberId: scope.numberId })
+    } catch (error) {
+      if (error instanceof NumberWriteAccessError) {
+        return NextResponse.json({ error: error.message }, { status: 403 })
+      }
+      throw error
+    }
+    const { error } = await scopeToNumber(
+      supabase.from('ai_configs').delete().eq('account_id', accountId),
+      scope.numberId,
+    )
     if (error) {
       console.error('[ai/config DELETE] error:', error)
       return NextResponse.json(

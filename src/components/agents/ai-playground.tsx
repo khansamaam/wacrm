@@ -5,6 +5,8 @@ import { toast } from 'sonner';
 import { Bot, RotateCcw, Send, Loader2, UserCircle2, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { useAiNumberScope } from '@/hooks/use-ai-number-scope';
+import { AiNumberScopeNotice } from '@/components/agents/ai-number-scope-notice';
 
 interface Turn {
   role: 'user' | 'assistant';
@@ -18,6 +20,8 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Tests the agent of the number selected in the sidebar (migration 062).
+  const { numberId } = useAiNumberScope();
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -38,6 +42,7 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
         // Send only role+content — the server ignores anything else.
         body: JSON.stringify({
           messages: next.map((t) => ({ role: t.role, content: t.content })),
+          ...(numberId ? { whatsapp_number_id: numberId } : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -81,6 +86,9 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
 
   return (
     <div className="flex h-[60vh] min-h-[420px] flex-col rounded-xl border border-border bg-card">
+      <div className="px-4 pt-3 empty:hidden">
+        <AiNumberScopeNotice />
+      </div>
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-2">

@@ -23,11 +23,20 @@ interface AiAccountStatus {
 }
 const statusCache = new Map<string, AiAccountStatus>();
 
-async function fetchAiAccountStatus(accountId: string): Promise<AiAccountStatus> {
-  const cached = statusCache.get(accountId);
+async function fetchAiAccountStatus(
+  accountId: string,
+  whatsappNumberId: string | null,
+): Promise<AiAccountStatus> {
+  // AI settings are per WhatsApp number (migration 062), so the status is
+  // cached per (account, number).
+  const cacheKey = `${accountId}:${whatsappNumberId ?? ""}`;
+  const cached = statusCache.get(cacheKey);
   if (cached) return cached;
   try {
-    const res = await fetch("/api/ai/config", { cache: "no-store" });
+    const query = whatsappNumberId
+      ? `?whatsapp_number_id=${encodeURIComponent(whatsappNumberId)}`
+      : "";
+    const res = await fetch(`/api/ai/config${query}`, { cache: "no-store" });
     if (!res.ok) return { autoReplyOn: false }; // don't cache a transient failure
     const j = await res.json();
     const status = {
@@ -35,7 +44,7 @@ async function fetchAiAccountStatus(accountId: string): Promise<AiAccountStatus>
       // is on, and the inbound bot is enabled.
       autoReplyOn: !!(j?.configured && j?.is_active && j?.auto_reply_enabled),
     };
-    statusCache.set(accountId, status);
+    statusCache.set(cacheKey, status);
     return status;
   } catch {
     return { autoReplyOn: false }; // don't cache
@@ -53,6 +62,8 @@ interface AiThreadBannerProps {
   assignedAgentId?: string | null;
   /** The acting agent — "Take over" assigns the thread to them. */
   currentUserId?: string | null;
+  /** WhatsApp number of the conversation (its AI settings apply). */
+  whatsappNumberId?: string | null;
   /** Called after a successful toggle so the parent can patch its local
    *  conversation state (the realtime UPDATE also arrives, but this keeps
    *  the banner instant). */
@@ -76,6 +87,7 @@ export function AiThreadBanner({
   handoffSummary,
   assignedAgentId,
   currentUserId,
+  whatsappNumberId = null,
   onChange,
 }: AiThreadBannerProps) {
   const t = useTranslations("Inbox.aiBanner");
@@ -91,11 +103,13 @@ export function AiThreadBanner({
   useEffect(() => {
     if (!accountId) return;
     let alive = true;
-    fetchAiAccountStatus(accountId).then((s) => alive && setAutoReplyOn(s.autoReplyOn));
+    fetchAiAccountStatus(accountId, whatsappNumberId).then(
+      (s) => alive && setAutoReplyOn(s.autoReplyOn),
+    );
     return () => {
       alive = false;
     };
-  }, [accountId]);
+  }, [accountId, whatsappNumberId]);
 
   const toggle = useCallback(
     async (paused: boolean) => {

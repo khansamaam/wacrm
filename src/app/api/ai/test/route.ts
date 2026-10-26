@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { resolveAiNumberScope, selectAiConfigRow } from '@/lib/ai/config'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { decrypt } from '@/lib/whatsapp/encryption'
@@ -41,11 +42,18 @@ export async function POST(request: Request) {
     const rawKey = typeof body.api_key === 'string' ? body.api_key.trim() : ''
     let apiKeyPlain = rawKey
     if (!apiKeyPlain) {
-      const { data: existing } = await supabase
-        .from('ai_configs')
-        .select('api_key')
-        .eq('account_id', accountId)
-        .maybeSingle()
+      // Per-number configs (migration 062): reuse the key of the config
+      // that applies to the number being edited.
+      const scope = await resolveAiNumberScope(supabase, accountId, body.whatsapp_number_id)
+      if (!scope.ok) {
+        return NextResponse.json({ error: scope.error }, { status: 400 })
+      }
+      const { data: existing } = await selectAiConfigRow<{ api_key: string | null }>(
+        supabase,
+        accountId,
+        'api_key',
+        scope.numberId,
+      )
       if (!existing?.api_key) {
         return NextResponse.json(
           { error: 'Enter an API key to test.' },

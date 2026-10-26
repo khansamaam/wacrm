@@ -51,13 +51,21 @@ export async function GET(request: Request) {
     // chart (see lib/dashboard/date-utils).
     const since = daysAgoStart(days - 1)
 
-    const { data, error } = await supabase
+    const numberFilter = url.searchParams.get('whatsapp_number_id')
+    if (numberFilter && !/^[0-9a-f-]{36}$/i.test(numberFilter)) {
+      return NextResponse.json({ error: 'Invalid whatsapp_number_id' }, { status: 400 })
+    }
+
+    let query = supabase
       .from('ai_usage_log')
       .select(
         'created_at, mode, provider, model, prompt_tokens, completion_tokens, total_tokens',
       )
       .eq('account_id', accountId)
       .gte('created_at', since.toISOString())
+    // Optional per-number view (migration 062).
+    if (numberFilter) query = query.eq('whatsapp_number_id', numberFilter)
+    const { data, error } = await query
       .order('created_at', { ascending: false })
       .limit(MAX_ROWS + 1)
 

@@ -11,6 +11,8 @@ export interface LogAiUsageArgs {
   model: string
   /** Provider usage; a no-op when null (nothing worth recording). */
   usage: AiUsage | null
+  /** WhatsApp number the call was for (migration 062). */
+  whatsappNumberId?: string | null
 }
 
 /**
@@ -32,7 +34,7 @@ export async function logAiUsage(
 ): Promise<void> {
   if (!args.usage) return
   try {
-    const { error } = await db.from('ai_usage_log').insert({
+    const row: Record<string, unknown> = {
       account_id: args.accountId,
       conversation_id: args.conversationId,
       mode: args.mode,
@@ -41,7 +43,16 @@ export async function logAiUsage(
       prompt_tokens: args.usage.promptTokens,
       completion_tokens: args.usage.completionTokens,
       total_tokens: args.usage.totalTokens,
-    })
+    }
+    let { error } = await db.from('ai_usage_log').insert(
+      args.whatsappNumberId
+        ? { ...row, whatsapp_number_id: args.whatsappNumberId }
+        : row,
+    )
+    if (error && args.whatsappNumberId && (error.code === '42703' || error.code === 'PGRST204')) {
+      // Migration 062 not applied yet.
+      ;({ error } = await db.from('ai_usage_log').insert(row))
+    }
     if (error) {
       console.error('[ai usage] log insert failed:', error)
     }

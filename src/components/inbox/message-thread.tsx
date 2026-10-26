@@ -1152,6 +1152,7 @@ export function MessageThread({
         handoffSummary={conversation.ai_handoff_summary}
         assignedAgentId={assignedAgentId}
         currentUserId={user?.id}
+        whatsappNumberId={conversation.whatsapp_number_id ?? null}
         onChange={(patch) => {
           if ("assigned_agent_id" in patch) {
             onAssignChange(conversation.id, patch.assigned_agent_id ?? null);

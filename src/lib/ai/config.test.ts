@@ -8,14 +8,21 @@ vi.mock('@/lib/whatsapp/encryption', () => ({
 
 import { loadAiConfig } from './config'
 
-function dbReturning(row: Record<string, unknown> | null): SupabaseClient {
+function dbReturningRows(rows: Record<string, unknown>[]): SupabaseClient {
   const chain = {
     from: () => chain,
     select: () => chain,
     eq: () => chain,
-    maybeSingle: () => Promise.resolve({ data: row, error: null }),
+    maybeSingle: () => Promise.resolve({ data: rows[0] ?? null, error: null }),
+    // Awaited list query (per-number lookup, migration 062).
+    then: (resolve: (v: unknown) => unknown) =>
+      resolve({ data: rows, error: null }),
   }
   return chain as unknown as SupabaseClient
+}
+
+function dbReturning(row: Record<string, unknown> | null): SupabaseClient {
+  return dbReturningRows(row ? [{ ...row, whatsapp_number_id: null }] : [])
 }
 
 const ROW = {
@@ -47,5 +54,34 @@ describe('loadAiConfig requireActive', () => {
     expect(
       await loadAiConfig(dbReturning(null), 'acct', { requireActive: false }),
     ).toBeNull()
+  })
+})
+
+describe('loadAiConfig per WhatsApp number (migration 062)', () => {
+  const active = { ...ROW, is_active: true }
+
+  it("uses the number's own config over the account-wide one", async () => {
+    const db = dbReturningRows([
+      { ...active, model: 'account-wide', whatsapp_number_id: null },
+      { ...active, model: 'clinic', whatsapp_number_id: 'num-clinic' },
+    ])
+    const config = await loadAiConfig(db, 'acct', { whatsappNumberId: 'num-clinic' })
+    expect(config?.model).toBe('clinic')
+  })
+
+  it('falls back to the account-wide config for a number without its own', async () => {
+    const db = dbReturningRows([
+      { ...active, model: 'account-wide', whatsapp_number_id: null },
+      { ...active, model: 'clinic', whatsapp_number_id: 'num-clinic' },
+    ])
+    const config = await loadAiConfig(db, 'acct', { whatsappNumberId: 'num-other' })
+    expect(config?.model).toBe('account-wide')
+  })
+
+  it("never uses another number's config", async () => {
+    const db = dbReturningRows([
+      { ...active, model: 'clinic', whatsapp_number_id: 'num-clinic' },
+    ])
+    expect(await loadAiConfig(db, 'acct', { whatsappNumberId: 'num-other' })).toBeNull()
   })
 })

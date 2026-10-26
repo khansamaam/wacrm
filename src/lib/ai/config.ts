@@ -14,6 +14,42 @@ interface AiConfigRow {
   embeddings_api_key: string | null
 }
 
+/**
+ * The config row that applies to a WhatsApp number (migration 062): the
+ * number's own config, else the account-wide (unscoped) config. Without a
+ * number only the unscoped config — or, before the migration, the single
+ * account config — applies.
+ */
+export async function selectAiConfigRow<T>(
+  db: SupabaseClient,
+  accountId: string,
+  columns: string,
+  whatsappNumberId?: string | null,
+): Promise<{ data: T | null; error: { code?: string; message: string } | null }> {
+  const { data, error } = await db
+    .from('ai_configs')
+    .select(`${columns}, whatsapp_number_id`)
+    .eq('account_id', accountId)
+  if (error) {
+    if (error.code === '42703' || error.code === 'PGRST204') {
+      // Migration 062 not applied: one config per account.
+      const legacy = await db
+        .from('ai_configs')
+        .select(columns)
+        .eq('account_id', accountId)
+        .maybeSingle()
+      return { data: (legacy.data as T | null) ?? null, error: legacy.error }
+    }
+    return { data: null, error }
+  }
+  const rows = (data ?? []) as unknown as Array<T & { whatsapp_number_id: string | null }>
+  const own = whatsappNumberId
+    ? rows.find((row) => row.whatsapp_number_id === whatsappNumberId)
+    : undefined
+  const unscoped = rows.find((row) => row.whatsapp_number_id === null)
+  return { data: (own ?? unscoped ?? null) as T | null, error: null }
+}
+
 const CONFIG_COLUMNS =
   'provider, model, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, embeddings_api_key'
 
@@ -31,14 +67,15 @@ const CONFIG_COLUMNS =
 export async function loadAiConfig(
   db: SupabaseClient,
   accountId: string,
-  opts: { requireActive?: boolean } = {},
+  opts: { requireActive?: boolean; whatsappNumberId?: string | null } = {},
 ): Promise<AiConfig | null> {
   const { requireActive = true } = opts
-  const { data, error } = await db
-    .from('ai_configs')
-    .select(CONFIG_COLUMNS)
-    .eq('account_id', accountId)
-    .maybeSingle()
+  const { data, error } = await selectAiConfigRow<AiConfigRow>(
+    db,
+    accountId,
+    CONFIG_COLUMNS,
+    opts.whatsappNumberId,
+  )
 
   if (error) throw error
   if (!data) return null
@@ -96,12 +133,14 @@ export async function loadAiConfig(
 export async function loadEmbeddingsKey(
   db: SupabaseClient,
   accountId: string,
+  whatsappNumberId?: string | null,
 ): Promise<{ key: string | null; corrupt: boolean }> {
-  const { data, error } = await db
-    .from('ai_configs')
-    .select('embeddings_api_key')
-    .eq('account_id', accountId)
-    .maybeSingle()
+  const { data, error } = await selectAiConfigRow<{ embeddings_api_key: string | null }>(
+    db,
+    accountId,
+    'embeddings_api_key',
+    whatsappNumberId,
+  )
   if (error || !data?.embeddings_api_key) return { key: null, corrupt: false }
   try {
     return { key: decrypt(data.embeddings_api_key), corrupt: false }
@@ -111,4 +150,31 @@ export async function loadEmbeddingsKey(
     )
     return { key: null, corrupt: true }
   }
+}
+
+/**
+ * Validate an optional WhatsApp number id for AI settings routes. The
+ * RLS-scoped client only sees numbers the caller can access, so a foreign
+ * or inaccessible id resolves to "not found". Returns null for the
+ * account-wide scope (no number).
+ */
+export async function resolveAiNumberScope(
+  db: SupabaseClient,
+  accountId: string,
+  raw: unknown,
+): Promise<{ ok: true; numberId: string | null } | { ok: false; error: string }> {
+  if (raw === undefined || raw === null || raw === '') {
+    return { ok: true, numberId: null }
+  }
+  if (typeof raw !== 'string' || !/^[0-9a-f-]{36}$/i.test(raw)) {
+    return { ok: false, error: 'Invalid whatsapp_number_id' }
+  }
+  const { data } = await db
+    .from('whatsapp_numbers')
+    .select('id')
+    .eq('id', raw)
+    .eq('account_id', accountId)
+    .maybeSingle()
+  if (!data) return { ok: false, error: 'WhatsApp number not found' }
+  return { ok: true, numberId: raw }
 }

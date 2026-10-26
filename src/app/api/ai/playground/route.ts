@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
-import { loadAiConfig } from '@/lib/ai/config'
+import { loadAiConfig, resolveAiNumberScope } from '@/lib/ai/config'
 import { retrieveKnowledge } from '@/lib/ai/knowledge'
 import { generateReply } from '@/lib/ai/generate'
 import { buildSystemPrompt } from '@/lib/ai/defaults'
@@ -53,8 +53,15 @@ export async function POST(request: Request) {
       )
     }
 
+    // Test the agent of one WhatsApp number (migration 062).
+    const scope = await resolveAiNumberScope(supabase, accountId, body?.whatsapp_number_id)
+    if (!scope.ok) {
+      return NextResponse.json({ error: scope.error }, { status: 400 })
+    }
+
     const config = await loadAiConfig(supabase, accountId, {
       requireActive: false,
+      whatsappNumberId: scope.numberId,
     }).catch((err) => {
       console.error('[ai/playground] loadAiConfig error:', err)
       throw new AiError('Stored API key could not be decrypted.', {
@@ -77,6 +84,8 @@ export async function POST(request: Request) {
       accountId,
       config,
       latestUserMessage(messages),
+      5,
+      scope.numberId,
     )
     const systemPrompt = buildSystemPrompt({
       userPrompt: config.systemPrompt,

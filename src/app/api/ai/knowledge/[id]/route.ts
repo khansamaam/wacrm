@@ -68,7 +68,7 @@ export async function PATCH(request: Request, { params }: Params) {
       .update(update)
       .eq('account_id', accountId)
       .eq('id', id)
-      .select('id')
+      .select('*')
       .maybeSingle()
     if (error) {
       console.error('[ai/knowledge/[id] PATCH] error:', error)
@@ -77,12 +77,24 @@ export async function PATCH(request: Request, { params }: Params) {
     if (!updated) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
     if (content !== undefined) {
+      // The document's own WhatsApp number decides the embeddings key and
+      // is copied onto its chunks (migration 062).
+      const numberId =
+        (updated.whatsapp_number_id as string | null | undefined) ?? null
       const { key: embeddingsApiKey, corrupt } = await loadEmbeddingsKey(
         supabase,
         accountId,
+        numberId,
       )
       try {
-        await ingestDocument(supabase, accountId, { embeddingsApiKey }, id, content)
+        await ingestDocument(
+          supabase,
+          accountId,
+          { embeddingsApiKey },
+          id,
+          content,
+          numberId,
+        )
       } catch (err) {
         const message = err instanceof AiError ? err.message : 'indexing failed'
         console.error('[ai/knowledge/[id] PATCH] ingest error:', err)

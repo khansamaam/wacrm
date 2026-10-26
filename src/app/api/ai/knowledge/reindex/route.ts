@@ -21,7 +21,7 @@ export async function POST() {
 
     const { data: docs, error } = await supabase
       .from('ai_knowledge_documents')
-      .select('id, content')
+      .select('*')
       .eq('account_id', accountId)
     if (error) {
       console.error('[ai/knowledge/reindex] fetch error:', error)
@@ -31,10 +31,24 @@ export async function POST() {
       )
     }
 
-    const { key: embeddingsApiKey, corrupt } = await loadEmbeddingsKey(
-      supabase,
-      accountId,
-    )
+    // Documents belong to a WhatsApp number (migration 062); each is
+    // embedded with the key of the config that applies to its number.
+    const keyByNumber = new Map<string, Awaited<ReturnType<typeof loadEmbeddingsKey>>>()
+    const keyFor = async (numberId: string | null) => {
+      const cacheKey = numberId ?? ''
+      let entry = keyByNumber.get(cacheKey)
+      if (!entry) {
+        entry = await loadEmbeddingsKey(supabase, accountId, numberId)
+        keyByNumber.set(cacheKey, entry)
+      }
+      return entry
+    }
+    const numberOf = (doc: Record<string, unknown>) =>
+      (doc.whatsapp_number_id as string | null | undefined) ?? null
+    let corrupt = false
+    for (const doc of docs ?? []) {
+      if ((await keyFor(numberOf(doc))).corrupt) corrupt = true
+    }
     // The whole point of Reindex is usually to backfill embeddings — so
     // if a key is configured but can't be decrypted, don't quietly do a
     // lexical-only pass and report success. Stop and tell the admin.
@@ -53,7 +67,16 @@ export async function POST() {
     let reindexed = 0
     for (const doc of docs ?? []) {
       try {
-        await ingestDocument(supabase, accountId, { embeddingsApiKey }, doc.id, doc.content)
+        const numberId = numberOf(doc)
+        const { key: embeddingsApiKey } = await keyFor(numberId)
+        await ingestDocument(
+          supabase,
+          accountId,
+          { embeddingsApiKey },
+          doc.id as string,
+          doc.content as string,
+          numberId,
+        )
         reindexed += 1
       } catch (err) {
         // One bad document (e.g. a mid-run embeddings rate-limit) should

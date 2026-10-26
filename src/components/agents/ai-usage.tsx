@@ -23,6 +23,7 @@ import { Skeleton } from '@/components/dashboard/skeleton';
 import { BarChart } from '@/components/tremor/bar-chart';
 import { formatCompactNumber } from '@/lib/currency';
 import { format, parseISO } from 'date-fns';
+import { useAiNumberScope } from '@/hooks/use-ai-number-scope';
 
 interface UsageResponse {
   window_days: number;
@@ -61,11 +62,14 @@ export function AiUsageCard() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<UsageResponse | null>(null);
   const loadedRef = useRef<string | null>(null);
+  // Usage of the number selected in the sidebar (migration 062).
+  const { numberId, query: numberQuery } = useAiNumberScope();
 
   const fetchUsage = useCallback(async (windowDays: number) => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/ai/usage?days=${windowDays}`, {
+      const numberParam = numberQuery ? `&${numberQuery.slice(1)}` : '';
+      const res = await fetch(`/api/ai/usage?days=${windowDays}${numberParam}`, {
         cache: 'no-store',
       });
       const json = await res.json().catch(() => null);
@@ -81,12 +85,12 @@ export function AiUsageCard() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [numberQuery]);
 
   useEffect(() => {
     if (!canView || !accountId) return;
     // Refetch on account switch or window change.
-    const key = `${accountId}:${days}`;
+    const key = `${accountId}:${days}:${numberId ?? ''}`;
     if (loadedRef.current === key) return;
     loadedRef.current = key;
     void fetchUsage(days);

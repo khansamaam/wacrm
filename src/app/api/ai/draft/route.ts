@@ -47,7 +47,7 @@ export async function POST(request: Request) {
     // row means "not yours / not found" either way.
     const { data: conversation, error: convErr } = await supabase
       .from('conversations')
-      .select('id')
+      .select('id, whatsapp_number_id')
       .eq('id', conversationId)
       .maybeSingle()
     if (convErr) {
@@ -58,7 +58,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Conversation not found' }, { status: 404 })
     }
 
-    const config = await loadAiConfig(supabase, accountId).catch((err) => {
+    // AI settings and knowledge are per WhatsApp number (migration 062).
+    const whatsappNumberId =
+      (conversation.whatsapp_number_id as string | null | undefined) ?? null
+
+    const config = await loadAiConfig(supabase, accountId, {
+      whatsappNumberId,
+    }).catch((err) => {
       // Decrypt failure — surface distinctly from "not configured".
       console.error('[ai/draft] loadAiConfig error:', err)
       throw new AiError('Stored API key could not be decrypted.', {
@@ -96,6 +102,8 @@ export async function POST(request: Request) {
       accountId,
       config,
       latestUserMessage(messages),
+      5,
+      whatsappNumberId,
     )
 
     const systemPrompt = buildSystemPrompt({
@@ -121,6 +129,7 @@ export async function POST(request: Request) {
         provider: config.provider,
         model: config.model,
         usage,
+        whatsappNumberId,
       })
     } catch (logErr) {
       console.error('[ai/draft] usage log skipped:', logErr)

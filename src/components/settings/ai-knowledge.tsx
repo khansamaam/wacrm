@@ -15,6 +15,7 @@ import {
   CardDescription,
 } from '@/components/ui/card';
 import { useTranslations } from 'next-intl';
+import { useAiNumberScope } from '@/hooks/use-ai-number-scope';
 
 interface DocSummary {
   id: string;
@@ -43,11 +44,13 @@ export function AiKnowledgeCard({
   const [reindexing, setReindexing] = useState(false);
   const loadedAccountIdRef = useRef<string | null>(null);
   const t = useTranslations('Settings.aiKnowledge');
+  // Knowledge is per WhatsApp number (migration 062).
+  const { numberId, query: numberQuery, loading: numbersLoading } = useAiNumberScope();
 
   const fetchDocs = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/ai/knowledge');
+      const res = await fetch(`/api/ai/knowledge${numberQuery}`);
       const data = await res.json();
       if (res.ok) setDocs(data.documents ?? []);
       else toast.error(data.error ?? t('loadFailed'));
@@ -56,13 +59,15 @@ export function AiKnowledgeCard({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [numberQuery]);
 
   useEffect(() => {
-    if (!accountId || loadedAccountIdRef.current === accountId) return;
-    loadedAccountIdRef.current = accountId;
+    if (!accountId || numbersLoading) return;
+    const loadKey = `${accountId}:${numberId ?? ''}`;
+    if (loadedAccountIdRef.current === loadKey) return;
+    loadedAccountIdRef.current = loadKey;
     void fetchDocs();
-  }, [accountId, fetchDocs]);
+  }, [accountId, fetchDocs, numberId, numbersLoading]);
 
   const openNew = () => {
     setEditing('new');
@@ -105,7 +110,12 @@ export function AiKnowledgeCard({
         {
           method: isNew ? 'POST' : 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: title.trim(), content: content.trim() }),
+          body: JSON.stringify({
+            title: title.trim(),
+            content: content.trim(),
+            // New documents belong to the number being configured.
+            ...(isNew && numberId ? { whatsapp_number_id: numberId } : {}),
+          }),
         },
       );
       const data = await res.json();

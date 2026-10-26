@@ -8,6 +8,7 @@ import { AiUsageCard } from '@/components/agents/ai-usage';
 import { AiConfig } from '@/components/settings/ai-config';
 import { useAuth } from '@/hooks/use-auth';
 import { canEditSettings } from '@/lib/auth/roles';
+import { useAiNumberScope } from '@/hooks/use-ai-number-scope';
 
 type Tab = 'playground' | 'setup' | 'usage';
 
@@ -16,13 +17,16 @@ export default function AgentsPage() {
   const canViewUsage = accountRole ? canEditSettings(accountRole) : false;
   const [tab, setTab] = useState<Tab>('playground');
   const [decided, setDecided] = useState(false);
+  // AI agents are per WhatsApp number (migration 062).
+  const { query: numberQuery, loading: numbersLoading } = useAiNumberScope();
 
   // Land first-time users on Setup, returning users on the Playground.
   useEffect(() => {
+    if (numbersLoading) return;
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/ai/config');
+        const res = await fetch(`/api/ai/config${numberQuery}`);
         const data = await res.json().catch(() => ({}));
         if (!cancelled) setTab(data?.configured ? 'playground' : 'setup');
       } catch {
@@ -34,7 +38,7 @@ export default function AgentsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [numberQuery, numbersLoading]);
 
   return (
     <div>

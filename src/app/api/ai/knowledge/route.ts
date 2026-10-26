@@ -5,7 +5,7 @@ import {
   toErrorResponse,
 } from '@/lib/auth/account'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
-import { loadEmbeddingsKey } from '@/lib/ai/config'
+import { loadEmbeddingsKey, resolveAiNumberScope } from '@/lib/ai/config'
 import { ingestDocument } from '@/lib/ai/knowledge'
 import { AiError } from '@/lib/ai/types'
 
@@ -14,14 +14,38 @@ import { AiError } from '@/lib/ai/types'
  *
  * List the account's knowledge-base documents (any member).
  */
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const { supabase, accountId } = await getCurrentAccount()
-    const { data, error } = await supabase
+    // Knowledge is per WhatsApp number (migration 062): with
+    // ?whatsapp_number_id= list that number's and account-wide documents.
+    const scope = await resolveAiNumberScope(
+      supabase,
+      accountId,
+      new URL(request.url).searchParams.get('whatsapp_number_id'),
+    )
+    if (!scope.ok) {
+      return NextResponse.json({ error: scope.error }, { status: 400 })
+    }
+    let query = supabase
       .from('ai_knowledge_documents')
-      .select('id, title, updated_at')
+      .select('*')
       .eq('account_id', accountId)
-      .order('updated_at', { ascending: false })
+    if (scope.numberId) {
+      query = query.or(
+        `whatsapp_number_id.is.null,whatsapp_number_id.eq.${scope.numberId}`,
+      )
+    }
+    const { data: rows, error } = await query.order('updated_at', {
+      ascending: false,
+    })
+    // List view only: never ship document bodies here.
+    const data = (rows ?? []).map((row) => ({
+      id: row.id as string,
+      title: row.title as string,
+      updated_at: row.updated_at as string,
+      whatsapp_number_id: (row.whatsapp_number_id as string | null | undefined) ?? null,
+    }))
     if (error) {
       console.error('[ai/knowledge GET] error:', error)
       return NextResponse.json(
@@ -57,9 +81,21 @@ export async function POST(request: Request) {
       )
     }
 
+    const scope = await resolveAiNumberScope(supabase, accountId, body?.whatsapp_number_id)
+    if (!scope.ok) {
+      return NextResponse.json({ error: scope.error }, { status: 400 })
+    }
+    const numberId = scope.numberId
+
     const { data: doc, error } = await supabase
       .from('ai_knowledge_documents')
-      .insert({ account_id: accountId, created_by: userId, title, content })
+      .insert({
+        account_id: accountId,
+        created_by: userId,
+        title,
+        content,
+        ...(numberId ? { whatsapp_number_id: numberId } : {}),
+      })
       .select('id')
       .single()
     if (error || !doc) {
@@ -73,6 +109,7 @@ export async function POST(request: Request) {
     const { key: embeddingsApiKey, corrupt } = await loadEmbeddingsKey(
       supabase,
       accountId,
+      numberId,
     )
     try {
       await ingestDocument(
@@ -81,6 +118,7 @@ export async function POST(request: Request) {
         { embeddingsApiKey },
         doc.id,
         content,
+        numberId,
       )
     } catch (err) {
       const message = err instanceof AiError ? err.message : 'indexing failed'

@@ -31,19 +31,20 @@ vi.mock('./admin-client', () => ({
           select: () => chain,
           eq: () => chain,
           in: () => chain,
+          or: () => chain,
           limit: () =>
             Promise.resolve({ data: h.state.autoResponders, error: null }),
         }
         return chain
       }
       // conversations
+      // .select().eq()[.eq()].maybeSingle() — chainable filters.
+      const filtered: Record<string, unknown> = {
+        eq: () => filtered,
+        maybeSingle: () => Promise.resolve({ data: h.state.conv, error: null }),
+      }
       return {
-        select: () => ({
-          eq: () => ({
-            maybeSingle: () =>
-              Promise.resolve({ data: h.state.conv, error: null }),
-          }),
-        }),
+        select: () => filtered,
         update: (payload: Record<string, unknown>) => {
           h.state.updatePayload = payload
           return { eq: () => Promise.resolve({ error: null }) }
@@ -208,5 +209,23 @@ describe('dispatchInboundToAiReply — handoff', () => {
       ai_autoreply_disabled: true,
       assigned_agent_id: 'agent-7',
     })
+  })
+})
+
+describe('dispatchInboundToAiReply — per WhatsApp number (migration 062)', () => {
+  it("loads the AI config and knowledge of the conversation's number", async () => {
+    h.state.conv = { ...h.state.conv, whatsapp_number_id: 'num-clinic' }
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.loadAiConfig).toHaveBeenCalledWith(expect.anything(), 'acct-1', {
+      whatsappNumberId: 'num-clinic',
+    })
+    expect(h.retrieveKnowledge).toHaveBeenCalledWith(
+      expect.anything(),
+      'acct-1',
+      expect.anything(),
+      'hi',
+      5,
+      'num-clinic',
+    )
   })
 })

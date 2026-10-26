@@ -47,7 +47,18 @@ export async function dispatchInboundToAiReply(
   try {
     const db = supabaseAdmin()
 
-    const config = await loadAiConfig(db, accountId)
+    // AI settings, knowledge and automations are per WhatsApp number
+    // (migrations 058/062): resolve the number this thread is on first.
+    const { data: convNumber } = await db
+      .from('conversations')
+      .select('whatsapp_number_id')
+      .eq('id', conversationId)
+      .eq('account_id', accountId)
+      .maybeSingle()
+    const whatsappNumberId =
+      (convNumber?.whatsapp_number_id as string | null | undefined) ?? null
+
+    const config = await loadAiConfig(db, accountId, { whatsappNumberId })
     if (!config || !config.autoReplyEnabled) return
 
     // Deterministic, user-configured responders win over the LLM — the
@@ -58,13 +69,22 @@ export async function dispatchInboundToAiReply(
     // avoid double-texting the customer. (Relationship triggers like
     // `first_inbound_message` don't count — they're not per-message
     // auto-responders.)
-    const { data: autoResponders } = await db
-      .from('automations')
-      .select('id')
-      .eq('account_id', accountId)
-      .eq('is_active', true)
-      .in('trigger_type', ['new_message_received', 'keyword_match'])
-      .limit(1)
+    // Only automations that run on this number (or on every number) count.
+    const responderQuery = () =>
+      db
+        .from('automations')
+        .select('id')
+        .eq('account_id', accountId)
+        .eq('is_active', true)
+        .in('trigger_type', ['new_message_received', 'keyword_match'])
+    let { data: autoResponders, error: responderErr } = whatsappNumberId
+      ? await responderQuery()
+          .or(`whatsapp_number_id.is.null,whatsapp_number_id.eq.${whatsappNumberId}`)
+          .limit(1)
+      : await responderQuery().limit(1)
+    if (responderErr && whatsappNumberId) {
+      ;({ data: autoResponders } = await responderQuery().limit(1))
+    }
     if (autoResponders && autoResponders.length > 0) return
 
     const { data: conv, error: convErr } = await db
@@ -104,6 +124,8 @@ export async function dispatchInboundToAiReply(
       accountId,
       config,
       latestUserMessage(messages),
+      5,
+      whatsappNumberId,
     )
 
     const systemPrompt = buildSystemPrompt({
@@ -130,6 +152,7 @@ export async function dispatchInboundToAiReply(
       provider: config.provider,
       model: config.model,
       usage,
+      whatsappNumberId,
     })
 
     if (handoff || !text) {

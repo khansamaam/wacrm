@@ -31,6 +31,8 @@ import type { AiProvider } from '@/lib/ai/types';
 import type { AccountMember } from '@/types';
 import { fetchAccountMembers, memberLabel } from '@/lib/account/members';
 import { useTranslations } from 'next-intl';
+import { useAiNumberScope } from '@/hooks/use-ai-number-scope';
+import { AiNumberScopeNotice } from '@/components/agents/ai-number-scope-notice';
 
 const MASKED_KEY = '••••••••••••••••';
 
@@ -81,15 +83,35 @@ export function AiConfig() {
   // refetches instead of showing the previous account's config. Mirrors
   // the loadedAccountIdRef pattern in whatsapp-config.tsx.
   const loadedAccountIdRef = useRef<string | null>(null);
+  // AI settings are per WhatsApp number (migration 062).
+  const { numberId, query: numberQuery, loading: numbersLoading } = useAiNumberScope();
 
   const fetchConfig = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/ai/config');
+      const res = await fetch(`/api/ai/config${numberQuery}`);
       const data = await res.json();
       if (!res.ok) {
         toast.error(data.error ?? t('loadFailed'));
         return;
+      }
+      if (!data.configured) {
+        // Switching to a number without its own config: start blank
+        // instead of showing the previous number's settings.
+        setConfigured(false);
+        setProvider('openai');
+        setModel(AI_PROVIDER_DEFAULT_MODEL.openai);
+        setSystemPrompt('');
+        setIsActive(false);
+        setAutoReplyEnabled(false);
+        setMaxPerConversation(3);
+        setHandoffAgentId('');
+        setHasStoredKey(false);
+        setApiKey('');
+        setKeyEdited(false);
+        setHasStoredEmbeddingsKey(false);
+        setEmbeddingsKey('');
+        setEmbeddingsKeyEdited(false);
       }
       if (data.configured) {
         setConfigured(true);
@@ -112,17 +134,19 @@ export function AiConfig() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [numberQuery]);
 
   useEffect(() => {
-    if (!accountId || loadedAccountIdRef.current === accountId) return;
-    loadedAccountIdRef.current = accountId;
+    if (!accountId || numbersLoading) return;
+    const loadKey = `${accountId}:${numberId ?? ''}`;
+    if (loadedAccountIdRef.current === loadKey) return;
+    loadedAccountIdRef.current = loadKey;
     void fetchConfig();
     // Members populate the handoff-target picker. Best-effort — on an
     // older deployment without the endpoint the picker just shows the
     // queue option.
     void fetchAccountMembers().then(setMembers);
-  }, [accountId, fetchConfig]);
+  }, [accountId, fetchConfig, numberId, numbersLoading]);
 
   // Swap the model default when the provider changes, unless the user
   // typed a custom model.
@@ -163,6 +187,7 @@ export function AiConfig() {
           provider,
           model: model.trim(),
           api_key: keyPayload(),
+          whatsapp_number_id: numberId,
         }),
       });
       const data = await res.json();
@@ -189,7 +214,7 @@ export function AiConfig() {
       const res = await fetch('/api/ai/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildBody()),
+        body: JSON.stringify({ ...buildBody(), whatsapp_number_id: numberId }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -208,7 +233,7 @@ export function AiConfig() {
   const handleRemove = async () => {
     setRemoving(true);
     try {
-      const res = await fetch('/api/ai/config', { method: 'DELETE' });
+      const res = await fetch(`/api/ai/config${numberQuery}`, { method: 'DELETE' });
       if (res.ok) {
         toast.success(t('removeSuccess'));
         setConfigured(false);
@@ -247,6 +272,9 @@ export function AiConfig() {
         title={t('title')}
         description={t('description')}
       />
+      <div className="mb-4">
+        <AiNumberScopeNotice />
+      </div>
 
       {!canEdit && (
         <p className="mb-4 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
