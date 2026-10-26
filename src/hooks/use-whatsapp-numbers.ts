@@ -5,38 +5,45 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { loadWhatsAppNumbers, peekWhatsAppNumbers } from '@/lib/whatsapp/numbers-client-cache'
 import type { WhatsAppNumber } from '@/types'
 
+/** Last number chosen in any tab: the starting point for a new tab. */
 const STORAGE_KEY = 'wacrm:selected-whatsapp-number'
+/** This tab's own choice. sessionStorage is per tab, so tabs can work on
+ *  different numbers side by side and a reload keeps the tab's number. */
+const TAB_STORAGE_KEY = 'wacrm:selected-whatsapp-number:tab'
 /** Same-tab broadcast so every mounted hook (sidebar switcher, inbox,
- *  dashboard, …) follows a selection change immediately. Other tabs are
- *  covered by the native `storage` event. */
+ *  dashboard, …) follows a selection change immediately. Deliberately not
+ *  synced across tabs. */
 const CHANGE_EVENT = 'wacrm:selected-whatsapp-number-change'
 
-/** Accessible number list plus a workspace-wide, browser-persisted filter. */
+function readStoredSelection(): string | null {
+  try {
+    const tab = window.sessionStorage.getItem(TAB_STORAGE_KEY)
+    // '' marks an explicit "All numbers" choice in this tab.
+    if (tab !== null) return tab || null
+    return window.localStorage.getItem(STORAGE_KEY)
+  } catch {
+    // Storage is optional (private/sandboxed browsers may reject access).
+    return null
+  }
+}
+
+/** Accessible number list plus a per-tab, browser-persisted filter. */
 export function useWhatsAppNumbers() {
   const [numbers, setNumbers] = useState<WhatsAppNumber[]>([])
   const [selectedNumberId, setSelectedState] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem(STORAGE_KEY)
-      if (stored) Promise.resolve().then(() => setSelectedState(stored))
-    } catch {
-      // Storage is optional (private/sandboxed browsers may reject access).
-    }
+    const stored = readStoredSelection()
+    if (stored) Promise.resolve().then(() => setSelectedState(stored))
 
     const onChange = (event: Event) => {
       const detail = (event as CustomEvent<string | null>).detail
       setSelectedState(detail ?? null)
     }
-    const onStorage = (event: StorageEvent) => {
-      if (event.key === STORAGE_KEY) setSelectedState(event.newValue)
-    }
     window.addEventListener(CHANGE_EVENT, onChange)
-    window.addEventListener('storage', onStorage)
     return () => {
       window.removeEventListener(CHANGE_EVENT, onChange)
-      window.removeEventListener('storage', onStorage)
     }
   }, [])
 
@@ -68,6 +75,7 @@ export function useWhatsAppNumbers() {
   const setSelectedNumberId = useCallback((id: string | null) => {
     setSelectedState(id)
     try {
+      window.sessionStorage.setItem(TAB_STORAGE_KEY, id ?? '')
       if (id) window.localStorage.setItem(STORAGE_KEY, id)
       else window.localStorage.removeItem(STORAGE_KEY)
     } catch {}
