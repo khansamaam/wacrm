@@ -8,6 +8,7 @@ import {
   type MutableRefObject,
   type ReactNode,
 } from 'react';
+import { invalidateWhatsAppNumbers } from '@/lib/whatsapp/numbers-client-cache';
 import {
   Check,
   Cloud,
@@ -125,6 +126,9 @@ export function WhatsAppNumbers() {
     : '';
 
   const loadNumbers = useCallback(async () => {
+    // This page reloads after every change; drop the shared cache so the
+    // sidebar and filters pick up the edit too.
+    invalidateWhatsAppNumbers();
     setLoading(true);
     try {
       const response = await fetch('/api/whatsapp/numbers', {

@@ -29,10 +29,13 @@ vi.mock("@supabase/ssr", () => ({
       // Mirrors real auth-js: an expired access token is transparently
       // refreshed inside getUser(), which rotates the refresh token and
       // pushes the new cookies through setAll() before resolving.
-      getUser: async () => {
+      getClaims: async () => {
         if (throwAuthError && mockAuthError) throw mockAuthError;
         if (refreshedCookies.length) opts.cookies.setAll(refreshedCookies);
-        return { data: { user: mockUser }, error: mockAuthError };
+        return {
+          data: mockUser ? { claims: { sub: mockUser.id } } : null,
+          error: mockAuthError,
+        };
       },
     },
   }),

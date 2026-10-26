@@ -24,11 +24,14 @@ export function useTotalUnread(): number {
     let cancelled = false;
 
     // Initial load. RLS scopes this to the signed-in user automatically —
-    // no explicit user_id filter needed here.
+    // no explicit user_id filter needed here. Only unread rows matter for
+    // the total (read ones count as 0 until a realtime event says
+    // otherwise), so skip the rest instead of pulling every conversation.
     (async () => {
       const { data, error } = await supabase
         .from("conversations")
-        .select("id, unread_count");
+        .select("id, unread_count")
+        .gt("unread_count", 0);
       if (cancelled || error || !data) return;
 
       const map = new Map<string, number>();

@@ -180,13 +180,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // account name lookup itself can't.
         let accountRow: AccountSummary | null = null;
         if (data.account_id) {
-          const { data: account, error: accountErr } = await supabase
+          // One round trip for the account and its module access. Before
+          // migration 039 the module_access column is missing, so retry
+          // without it and fall back to the historic "all modules"
+          // behaviour instead of blanking the authenticated shell.
+          let accountResult = await supabase
             .from('accounts')
             // default_currency added in migration 021; narrowed to the
             // USD fallback below for older schemas where it reads null.
-            .select('id, name, default_currency')
+            .select('id, name, default_currency, module_access')
             .eq('id', data.account_id)
             .maybeSingle();
+          if (accountResult.error) {
+            // Expected before migration 039. Non-fatal, and must not use
+            // console.error — Next's development overlay turns that
+            // diagnostic into a blocking screen.
+            console.warn(
+              '[AuthProvider] module access unavailable; using defaults:',
+              accountResult.error.message
+            );
+            accountResult = (await supabase
+              .from('accounts')
+              .select('id, name, default_currency')
+              .eq('id', data.account_id)
+              .maybeSingle()) as typeof accountResult;
+          }
+          const { data: account, error: accountErr } = accountResult;
           if (accountErr) {
             console.error('[AuthProvider] fetchAccount error:', {
               message: accountErr.message,
@@ -195,30 +214,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               code: accountErr.code,
             });
           } else if (account) {
-            // Module access arrived later than the account-sharing schema.
-            // Read it independently so deployments remain usable while
-            // migration 039 is being rolled out: an older database can still
-            // load the account and falls back to the historic "all modules"
-            // behaviour instead of blanking the authenticated shell.
-            const { data: accessRow, error: accessErr } = await supabase
-              .from('accounts')
-              .select('module_access')
-              .eq('id', data.account_id)
-              .maybeSingle();
-            if (accessErr) {
-              // This is expected before migration 039. It is non-fatal and
-              // must not use console.error — Next's development overlay turns
-              // that diagnostic into a blocking screen.
-              console.warn(
-                '[AuthProvider] module access unavailable; using defaults:',
-                accessErr.message
-              );
-            }
             accountRow = {
               id: account.id,
               name: account.name,
               default_currency: account.default_currency ?? DEFAULT_CURRENCY,
-              moduleAccess: normalizeModuleAccess(accessRow?.module_access),
+              moduleAccess: normalizeModuleAccess(
+                (account as { module_access?: unknown }).module_access
+              ),
             };
           }
         }

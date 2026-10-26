@@ -64,12 +64,16 @@ export async function middleware(request: NextRequest) {
     }
   )
 
-  let user = null
+  let user: { id: string } | null = null
   let authError: unknown = null
 
   try {
-    const result = await supabase.auth.getUser()
-    user = result.data.user
+    // getClaims() verifies the access-token JWT locally against the
+    // project's cached JWKS (asymmetric signing key), instead of
+    // getUser()'s network round-trip to Supabase Auth on every request.
+    // It still refreshes an expired session via setAll() above.
+    const result = await supabase.auth.getClaims()
+    user = result.data?.claims?.sub ? { id: result.data.claims.sub } : null
     authError = result.error
   } catch (error) {
     // Auth errors are normally returned by supabase-js, but handling a thrown
@@ -82,7 +86,7 @@ export async function middleware(request: NextRequest) {
     user = null
   }
 
-  // getUser() transparently refreshes an expired access token, which
+  // getClaims() transparently refreshes an expired access token, which
   // ROTATES the refresh token and writes the new cookies onto
   // `supabaseResponse` via setAll() above. Any response we return in
   // place of `supabaseResponse` (every redirect / JSON branch below)
@@ -147,6 +151,8 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    // The Meta webhook authenticates by signature, never by session —
+    // skip the auth pass so Meta's POSTs stay fast.
+    '/((?!_next/static|_next/image|favicon.ico|api/whatsapp/webhook|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }

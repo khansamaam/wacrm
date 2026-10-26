@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
+import { loadWhatsAppNumbers } from '@/lib/whatsapp/numbers-client-cache'
 import type { WhatsAppNumber } from '@/types'
 
 const STORAGE_KEY = 'wacrm:selected-whatsapp-number'
@@ -41,11 +42,9 @@ export function useWhatsAppNumbers() {
 
   useEffect(() => {
     let cancelled = false
-    void fetch('/api/whatsapp/numbers', { cache: 'no-store' })
-      .then(async (response) => {
-        const body = await response.json()
-        if (!response.ok) throw new Error(body.error || 'Failed to load WhatsApp numbers')
-        if (!cancelled) setNumbers(Array.isArray(body.numbers) ? body.numbers : [])
+    void loadWhatsAppNumbers()
+      .then((list) => {
+        if (!cancelled) setNumbers(list)
       })
       .catch((error) => console.error('[use-whatsapp-numbers] load failed:', error))
       .finally(() => { if (!cancelled) setLoading(false) })

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { createClient } from '@/lib/supabase/client'
+import { loadWhatsAppNumbers } from '@/lib/whatsapp/numbers-client-cache'
 
 export interface WhatsAppConnectionStatus {
   loading: boolean
@@ -34,39 +35,27 @@ export function useWhatsAppConnectionStatus(
   const [status, setStatus] =
     useState<WhatsAppConnectionStatus>(INITIAL_STATUS)
 
-  const refresh = useCallback(async () => {
-    if (!accountId) return
+  const refresh = useCallback((force = false) => {
+    if (!accountId) return Promise.resolve()
 
-    try {
-      const response = await fetch('/api/whatsapp/numbers', {
-        cache: 'no-store',
+    return loadWhatsAppNumbers({ force })
+      .then((numbers) => {
+        const connected = numbers.filter((number) => number.status === 'connected')
+        const primary = connected.find((number) => number.is_default) ?? connected[0] ?? numbers[0]
+        setStatus({
+          loading: false,
+          configured: numbers.length > 0,
+          connected: connected.length > 0,
+          connectedCount: connected.length,
+          totalCount: numbers.length,
+          phoneNumber: primary?.display_phone_number || primary?.phone_number_id || null,
+          numberKind: primary?.display_phone_number ? 'display' : primary ? 'id' : null,
+        })
       })
-      if (!response.ok) {
-        throw new Error(`Status request failed: ${response.status}`)
-      }
-
-      const payload = (await response.json()) as { numbers?: Array<{
-        display_phone_number?: string | null
-        phone_number_id: string
-        status: string
-        is_default: boolean
-      }> }
-      const numbers = payload.numbers ?? []
-      const connected = numbers.filter((number) => number.status === 'connected')
-      const primary = connected.find((number) => number.is_default) ?? connected[0] ?? numbers[0]
-      setStatus({
-        loading: false,
-        configured: numbers.length > 0,
-        connected: connected.length > 0,
-        connectedCount: connected.length,
-        totalCount: numbers.length,
-        phoneNumber: primary?.display_phone_number || primary?.phone_number_id || null,
-        numberKind: primary?.display_phone_number ? 'display' : primary ? 'id' : null,
+      .catch((error) => {
+        console.warn('[sidebar] Could not load WhatsApp status:', error)
+        setStatus((current) => ({ ...current, loading: false }))
       })
-    } catch (error) {
-      console.warn('[sidebar] Could not load WhatsApp status:', error)
-      setStatus((current) => ({ ...current, loading: false }))
-    }
   }, [accountId])
 
   useEffect(() => {
@@ -85,7 +74,7 @@ export function useWhatsAppConnectionStatus(
           table: 'whatsapp_numbers',
           filter: `account_id=eq.${accountId}`,
         },
-        () => void refresh()
+        () => void refresh(true)
       )
       .subscribe()
 

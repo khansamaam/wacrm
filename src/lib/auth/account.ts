@@ -106,13 +106,16 @@ export interface AccountContext {
 export async function getCurrentAccount(): Promise<AccountContext> {
   const supabase = await createClient();
 
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
-  if (userErr || !user) {
+  // getClaims() verifies the session JWT locally (cached JWKS) rather
+  // than calling Supabase Auth over the network like getUser() — one
+  // fewer round trip on every API request. Middleware has already
+  // refreshed an expired token by the time a route runs.
+  const { data: claimsData, error: claimsErr } = await supabase.auth.getClaims();
+  const userId = claimsData?.claims?.sub;
+  if (claimsErr || !userId) {
     throw new UnauthorizedError();
   }
+  const user = { id: userId };
 
   const { data, error } = await supabase
     .from("profiles")
