@@ -19,6 +19,7 @@ import {
 } from "lucide-react"
 import { useWhatsAppNumbers } from "@/hooks/use-whatsapp-numbers"
 import { WhatsAppNumberFilter } from "@/components/whatsapp/number-filter"
+import { NumberBadge } from "@/components/whatsapp/number-badge"
 import type { WhatsAppNumber } from "@/types"
 
 import { createClient } from "@/lib/supabase/client"
@@ -338,13 +339,18 @@ function AutomationCard({
             >
               {meta.label}
             </span>
-            {numbers.length > 1 && (
-              <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-[11px] font-medium">
-                {automation.whatsapp_number_id
-                  ? numbers.find((n) => n.id === automation.whatsapp_number_id)?.label ?? "—"
-                  : "All numbers"}
-              </span>
-            )}
+            {numbers.length > 1 &&
+              (automation.whatsapp_number_id ? (
+                <NumberBadge
+                  numberId={automation.whatsapp_number_id}
+                  numbers={numbers}
+                  onlyWhenAll={false}
+                />
+              ) : (
+                <span className="inline-flex items-center rounded border border-border px-1.5 py-px text-[10px] font-semibold">
+                  All numbers
+                </span>
+              ))}
             <span className="tabular-nums">
               {automation.execution_count === 1
                 ? t("runs", { count: automation.execution_count })

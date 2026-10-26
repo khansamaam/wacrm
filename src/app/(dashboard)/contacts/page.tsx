@@ -59,6 +59,7 @@ import { GatedButton } from '@/components/ui/gated-button';
 import { useTranslations } from 'next-intl';
 import { useWhatsAppNumbers } from '@/hooks/use-whatsapp-numbers';
 import { matchesNumber } from '@/components/whatsapp/number-scope-select';
+import { NumberBadge } from '@/components/whatsapp/number-badge';
 import { WhatsAppNumberFilter } from '@/components/whatsapp/number-filter';
 
 const PAGE_SIZE = 100;
@@ -586,7 +587,14 @@ export default function ContactsPage() {
                     />
                   </TableCell>
                   <TableCell className="text-foreground font-medium">
-                    {contact.name || <span className="text-muted-foreground italic">{t('unnamed')}</span>}
+                    <span className="flex items-center gap-1.5">
+                      <NumberBadge
+                        numberId={contact.whatsapp_number_id}
+                        numbers={numbers}
+                        selectedNumberId={selectedNumberId}
+                      />
+                      {contact.name || <span className="text-muted-foreground italic">{t('unnamed')}</span>}
+                    </span>
                   </TableCell>
                   <TableCell className="text-muted-foreground font-mono text-xs">
                     {contact.phone}

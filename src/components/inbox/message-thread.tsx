@@ -30,6 +30,8 @@ import {
 } from "lucide-react";
 import { format, isToday, isYesterday, differenceInHours } from "date-fns";
 import { useTranslations } from "next-intl";
+import { NumberBadge } from "@/components/whatsapp/number-badge";
+import type { WhatsAppNumber } from "@/types";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
@@ -69,6 +71,8 @@ interface MessageThreadProps {
   numberReadOnly?: boolean;
   /** Business account (WABA) of the conversation's number. */
   wabaId?: string | null;
+  /** Connected numbers, for the header's number badge. */
+  numbers?: WhatsAppNumber[];
   conversation: Conversation | null;
   contact: Contact | null;
   messages: Message[];
@@ -172,6 +176,7 @@ export function MessageThread({
   onToggleContactPanel,
   numberReadOnly = false,
   wabaId = null,
+  numbers = [],
 }: MessageThreadProps) {
   const t = useTranslations("Inbox.messageThread");
   const tTimer = useTranslations("Inbox.sessionTimer");
@@ -903,7 +908,14 @@ export function MessageThread({
             {displayName.charAt(0).toUpperCase()}
           </div>
           <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold text-foreground">{displayName}</h2>
+            <h2 className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-foreground">
+              <NumberBadge
+                numberId={conversation.whatsapp_number_id}
+                numbers={numbers}
+                onlyWhenAll={false}
+              />
+              <span className="truncate">{displayName}</span>
+            </h2>
             <p className="truncate text-xs text-muted-foreground">{contact.phone}</p>
           </div>
           {/* Session timer badge — hidden on the narrowest phones so

@@ -12,6 +12,8 @@ import type { Conversation, ConversationStatus, Tag } from "@/types";
 import { Search, ChevronDown, X } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslations } from "next-intl";
+import { NumberBadge } from "@/components/whatsapp/number-badge";
+import type { WhatsAppNumber } from "@/types";
 import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
@@ -36,6 +38,8 @@ interface ConversationListProps {
    */
   resyncToken?: number;
   whatsappNumberId?: string | null;
+  /** Connected numbers, for the per-chat number badge in "All numbers". */
+  numbers?: WhatsAppNumber[];
 }
 
 const STATUS_COLORS: Record<ConversationStatus, string> = {
@@ -133,6 +137,7 @@ export function ConversationList({
   accountId = null,
   resyncToken = 0,
   whatsappNumberId = null,
+  numbers = [],
 }: ConversationListProps) {
   const t = useTranslations("Inbox.conversationList");
   
@@ -683,6 +688,13 @@ export function ConversationList({
                 isActive={conv.id === activeConversationId}
                 onSelect={handleSelect}
                 t={t}
+                badge={
+                  <NumberBadge
+                    numberId={conv.whatsapp_number_id}
+                    numbers={numbers}
+                    selectedNumberId={whatsappNumberId}
+                  />
+                }
               />
             ))}
           </div>
@@ -697,6 +709,8 @@ interface ConversationItemProps {
   isActive: boolean;
   onSelect: (conversation: Conversation) => void;
   t: ReturnType<typeof useTranslations>;
+  /** Number badge, shown when several numbers are listed together. */
+  badge?: React.ReactNode;
 }
 
 function ConversationItem({
@@ -704,6 +718,7 @@ function ConversationItem({
   isActive,
   onSelect,
   t,
+  badge,
 }: ConversationItemProps) {
   const contact = conversation.contact;
   const displayName = contact?.name || contact?.phone || t("unknown");
@@ -743,8 +758,11 @@ function ConversationItem({
       {/* Content */}
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-sm font-medium text-foreground">
-            {displayName}
+          <span className="flex min-w-0 items-center gap-1.5">
+            {badge}
+            <span className="truncate text-sm font-medium text-foreground">
+              {displayName}
+            </span>
           </span>
           <span className="shrink-0 text-[10px] text-muted-foreground">{timeAgo}</span>
         </div>

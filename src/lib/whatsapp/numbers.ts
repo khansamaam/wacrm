@@ -37,6 +37,8 @@ export interface WhatsAppNumberRow {
     | 'processing'
     | 'completed'
     | 'failed'
+  /** Non-secret metadata (e.g. business_id, badge_label, badge_color). */
+  metadata?: Record<string, unknown> | null
   created_at: string
   updated_at: string
 }
@@ -89,6 +91,7 @@ export const SERVER_NUMBER_COLUMNS = [
   'coexistence_onboarded_at',
   'history_sync_status',
   'contacts_sync_status',
+  'metadata',
   'created_at',
   'updated_at',
 ].join(', ')
@@ -114,6 +117,7 @@ export const SAFE_NUMBER_COLUMNS = [
   'coexistence_onboarded_at',
   'history_sync_status',
   'contacts_sync_status',
+  'metadata',
   'created_at',
   'updated_at',
 ].join(', ')

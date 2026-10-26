@@ -7,12 +7,20 @@ import {
   sanitizeWhatsAppNumber,
   type WhatsAppNumberRow,
 } from '@/lib/whatsapp/numbers'
+import {
+  isNumberBadgeColor,
+  MAX_BADGE_LABEL_LENGTH,
+} from '@/lib/whatsapp/number-badge'
 
 interface UpdateNumberBody {
   label?: unknown
   meta_app_id?: unknown
   meta_app_secret?: unknown
   meta_coexistence_config_id?: unknown
+  /** Short tag shown on records of this number ("BFL"); '' resets it. */
+  badge_label?: unknown
+  /** One of NUMBER_BADGE_COLORS; '' resets to the automatic colour. */
+  badge_color?: unknown
 }
 
 export async function PATCH(
@@ -27,7 +35,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
     }
 
-    const updates: Record<string, string | null> = {}
+    const updates: Record<string, unknown> = {}
     if (typeof body.label === 'string') {
       const label = body.label.trim()
       if (!label || label.length > 80) {
@@ -50,6 +58,35 @@ export async function PATCH(
           { status: 500 },
         )
       }
+    }
+
+    if (body.badge_label !== undefined || body.badge_color !== undefined) {
+      const { data: current } = await supabase
+        .from('whatsapp_numbers')
+        .select('metadata')
+        .eq('id', id)
+        .eq('account_id', accountId)
+        .maybeSingle()
+      const metadata = { ...((current?.metadata as Record<string, unknown> | null) ?? {}) }
+      if (typeof body.badge_label === 'string') {
+        const badge = body.badge_label.trim().toUpperCase()
+        if (badge.length > MAX_BADGE_LABEL_LENGTH || /[^A-Z0-9]/.test(badge)) {
+          return NextResponse.json(
+            { error: `Short name must be up to ${MAX_BADGE_LABEL_LENGTH} letters or digits` },
+            { status: 400 },
+          )
+        }
+        if (badge) metadata.badge_label = badge
+        else delete metadata.badge_label
+      }
+      if (typeof body.badge_color === 'string') {
+        if (body.badge_color && !isNumberBadgeColor(body.badge_color)) {
+          return NextResponse.json({ error: 'Unknown badge colour' }, { status: 400 })
+        }
+        if (body.badge_color) metadata.badge_color = body.badge_color
+        else delete metadata.badge_color
+      }
+      updates.metadata = metadata
     }
 
     if (Object.keys(updates).length === 0) {

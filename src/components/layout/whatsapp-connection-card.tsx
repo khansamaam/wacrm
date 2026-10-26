@@ -15,6 +15,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
+import { NumberBadge } from '@/components/whatsapp/number-badge'
 
 interface WhatsAppConnectionCardProps {
   status: WhatsAppConnectionStatus
@@ -191,8 +192,9 @@ function NumberSwitcher({
           <span className="flex w-full flex-col gap-1.5 border-t pt-2">
             {numbers.map((number) => (
               <span key={number.id} className="min-w-0">
-                <span className="text-foreground block truncate text-[11px] font-medium">
-                  {numberText(number)}
+                <span className="text-foreground flex items-center gap-1.5 text-[11px] font-medium">
+                  <NumberBadge numberId={number.id} numbers={numbers} onlyWhenAll={false} />
+                  <span className="truncate">{numberText(number)}</span>
                 </span>
                 <StatusLine number={number} t={t} />
               </span>
@@ -216,7 +218,10 @@ function NumberSwitcher({
               )}
             />
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm">{number.label}</span>
+              <span className="flex items-center gap-1.5 text-sm">
+                <NumberBadge numberId={number.id} numbers={numbers} onlyWhenAll={false} />
+                <span className="truncate">{number.label}</span>
+              </span>
               <span className="text-muted-foreground block truncate text-xs">
                 {numberText(number)}
               </span>

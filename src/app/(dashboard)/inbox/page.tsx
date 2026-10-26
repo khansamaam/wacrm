@@ -609,6 +609,7 @@ function InboxPageInner() {
             accountId={accountId}
             resyncToken={resyncToken}
             whatsappNumberId={selectedNumberId}
+            numbers={numbers}
           />
         </div>
 
@@ -642,6 +643,7 @@ function InboxPageInner() {
             onRefresh={handleManualRefresh}
             contactPanelOpen={contactPanelOpen}
             onToggleContactPanel={handleToggleContactPanel}
+            numbers={numbers}
             wabaId={
               numbers.find((n) => n.id === activeConversation?.whatsapp_number_id)
                 ?.waba_id ?? null

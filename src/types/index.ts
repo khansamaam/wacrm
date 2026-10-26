@@ -375,6 +375,9 @@ export interface WhatsAppNumber {
   /** The signed-in member's level on this number (GET /api/whatsapp/numbers).
    *  'view' = can read chats but not reply. */
   my_access_level?: 'view' | 'full';
+  /** Non-secret metadata; badge_label / badge_color customise the
+   *  number's colour tag. */
+  metadata?: Record<string, unknown> | null;
 }
 
 // Raw Meta status enum. We persist this verbatim from Meta (sync + webhook)

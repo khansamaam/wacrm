@@ -45,6 +45,13 @@ import { Label } from '@/components/ui/label';
 import { SettingsPanelHead } from './settings-panel-head';
 import { WhatsAppManualConnect } from './whatsapp-manual-connect';
 import { WhatsAppNumberWebhookDialog } from './whatsapp-number-webhook';
+import { NumberBadge } from '@/components/whatsapp/number-badge';
+import {
+  deriveBadgeLabel,
+  MAX_BADGE_LABEL_LENGTH,
+  NUMBER_BADGE_COLOR_KEYS,
+  NUMBER_BADGE_COLORS,
+} from '@/lib/whatsapp/number-badge';
 
 type AddStep = 'choose' | 'cloud_api' | 'coexistence' | 'manual';
 
@@ -101,6 +108,8 @@ export function WhatsAppNumbers() {
   const [editMetaAppSecret, setEditMetaAppSecret] = useState('');
   const [editMetaCoexistenceConfigId, setEditMetaCoexistenceConfigId] =
     useState('');
+  const [editBadgeLabel, setEditBadgeLabel] = useState('');
+  const [editBadgeColor, setEditBadgeColor] = useState('');
   const [webhookNumber, setWebhookNumber] = useState<WhatsAppNumber | null>(
     null
   );
@@ -425,6 +434,10 @@ export function WhatsAppNumbers() {
     setEditMetaCoexistenceConfigId(
       number.meta_coexistence_config_id ?? ''
     );
+    const badgeLabel = number.metadata?.badge_label;
+    const badgeColor = number.metadata?.badge_color;
+    setEditBadgeLabel(typeof badgeLabel === 'string' ? badgeLabel : '');
+    setEditBadgeColor(typeof badgeColor === 'string' ? badgeColor : '');
   }
 
   async function saveMetaSettings() {
@@ -439,6 +452,8 @@ export function WhatsAppNumbers() {
           meta_app_id: editMetaAppId,
           meta_app_secret: editMetaAppSecret,
           meta_coexistence_config_id: editMetaCoexistenceConfigId,
+          badge_label: editBadgeLabel,
+          badge_color: editBadgeColor,
         }),
       });
       const body = await readJson(response);
@@ -501,6 +516,11 @@ export function WhatsAppNumbers() {
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
+                  <NumberBadge
+                    numberId={number.id}
+                    numbers={numbers}
+                    onlyWhenAll={false}
+                  />
                   <span className="font-medium">{number.label}</span>
                   {number.is_default && (
                     <Badge variant="secondary">Default</Badge>
@@ -879,6 +899,69 @@ export function WhatsAppNumbers() {
                 placeholder="Optional for Cloud API numbers"
               />
             </Field>
+            {editingNumber && (
+              <Field label="Short name and colour (shown on chats, contacts and lists)">
+                <div className="flex flex-wrap items-center gap-3">
+                  <Input
+                    className="w-28 uppercase"
+                    maxLength={MAX_BADGE_LABEL_LENGTH}
+                    value={editBadgeLabel}
+                    onChange={(event) =>
+                      setEditBadgeLabel(
+                        event.target.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase()
+                      )
+                    }
+                    placeholder={deriveBadgeLabel(editingNumber)}
+                  />
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {NUMBER_BADGE_COLOR_KEYS.map((key) => (
+                      <button
+                        key={key}
+                        type="button"
+                        aria-label={key}
+                        onClick={() =>
+                          setEditBadgeColor(editBadgeColor === key ? '' : key)
+                        }
+                        className={
+                          editBadgeColor === key
+                            ? 'size-6 rounded-full ring-2 ring-foreground ring-offset-2 ring-offset-background'
+                            : 'size-6 rounded-full'
+                        }
+                        style={{ backgroundColor: NUMBER_BADGE_COLORS[key] }}
+                      />
+                    ))}
+                  </div>
+                  <NumberBadge
+                    numberId={editingNumber.id}
+                    // The real list (same order → same automatic colour),
+                    // with this number's unsaved short name / colour applied.
+                    // A placeholder keeps the preview visible when only one
+                    // number exists.
+                    numbers={[
+                      ...numbers.map((n) =>
+                        n.id === editingNumber.id
+                          ? {
+                              ...n,
+                              metadata: {
+                                ...(n.metadata ?? {}),
+                                badge_label: editBadgeLabel || undefined,
+                                badge_color: editBadgeColor || undefined,
+                              },
+                            }
+                          : n
+                      ),
+                      ...(numbers.length > 1
+                        ? []
+                        : [{ ...editingNumber, id: `${editingNumber.id}-preview` }]),
+                    ]}
+                    onlyWhenAll={false}
+                  />
+                </div>
+                <p className="text-muted-foreground mt-1 text-xs">
+                  Leave empty to use the automatic short name and colour.
+                </p>
+              </Field>
+            )}
             <div className="flex justify-end gap-2">
               <Button variant="ghost" onClick={() => setEditingNumber(null)}>
                 Cancel

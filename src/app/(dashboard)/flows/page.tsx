@@ -22,6 +22,7 @@ import { useTranslations } from "next-intl";
 import { useCan } from "@/hooks/use-can";
 import { useWhatsAppNumbers } from "@/hooks/use-whatsapp-numbers";
 import { WhatsAppNumberFilter } from "@/components/whatsapp/number-filter";
+import { NumberBadge } from "@/components/whatsapp/number-badge";
 import {
   NumberScopeSelect,
   defaultScopeNumberId,
@@ -266,6 +267,13 @@ export default function FlowsPage() {
               onEdit={() => router.push(`/flows/${flow.id}`)}
               onDelete={() => handleDelete(flow)}
               t={t}
+              badge={
+                <NumberBadge
+                  numberId={flow.whatsapp_number_id}
+                  numbers={numbers}
+                  selectedNumberId={selectedNumberId}
+                />
+              }
             />
           ))}
         </div>
@@ -396,11 +404,13 @@ function FlowCard({
   onEdit,
   onDelete,
   t,
+  badge,
 }: {
   flow: FlowRow;
   onEdit: () => void;
   onDelete: () => void;
   t: ReturnType<typeof useTranslations>;
+  badge?: React.ReactNode;
 }) {
   const triggerSummary = describeTrigger(flow, t);
   const StatusIcon =
@@ -414,6 +424,7 @@ function FlowCard({
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <Workflow className="h-4 w-4 shrink-0 text-primary" />
+          {badge}
           <h3 className="truncate text-sm font-semibold text-foreground">
             {flow.name}
           </h3>

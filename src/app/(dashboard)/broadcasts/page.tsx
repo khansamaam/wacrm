@@ -19,6 +19,7 @@ import { GatedButton } from '@/components/ui/gated-button';
 import { getBroadcastStatus } from '@/lib/broadcast-status';
 import { useTranslations } from 'next-intl';
 import { useWhatsAppNumbers } from '@/hooks/use-whatsapp-numbers';
+import { NumberBadge } from '@/components/whatsapp/number-badge';
 import { WhatsAppNumberFilter } from '@/components/whatsapp/number-filter';
 
 /**
@@ -249,7 +250,14 @@ export default function BroadcastsPage() {
                     onClick={() => router.push(`/broadcasts/${broadcast.id}`)}
                   >
                     <TableCell className="font-medium text-foreground">
-                      {broadcast.name}
+                      <span className="flex items-center gap-1.5">
+                        <NumberBadge
+                          numberId={broadcast.whatsapp_number_id}
+                          numbers={numbers}
+                          selectedNumberId={selectedNumberId}
+                        />
+                        {broadcast.name}
+                      </span>
                     </TableCell>
                     <TableCell className="hidden text-muted-foreground md:table-cell">
                       {broadcast.template_name}

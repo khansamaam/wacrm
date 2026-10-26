@@ -25,6 +25,7 @@ import {
 } from "@/lib/whatsapp/interactive";
 import type { QuickReply, QuickReplyKind } from "@/types";
 import { useWhatsAppNumbers } from "@/hooks/use-whatsapp-numbers";
+import { NumberBadge } from "@/components/whatsapp/number-badge";
 import {
   NumberScopeSelect,
   defaultScopeNumberId,
@@ -177,7 +178,14 @@ export function QuickRepliesManager() {
                 <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
               )}
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-foreground">{qr.title}</p>
+                <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-foreground">
+                  <NumberBadge
+                    numberId={qr.whatsapp_number_id}
+                    numbers={numbers}
+                    selectedNumberId={selectedNumberId}
+                  />
+                  <span className="truncate">{qr.title}</span>
+                </p>
                 <p className="truncate text-xs text-muted-foreground">
                   {qr.kind === "interactive" && qr.interactive_payload
                     ? interactivePayloadPreviewText(qr.interactive_payload)
