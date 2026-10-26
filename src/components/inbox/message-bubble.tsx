@@ -315,7 +315,9 @@ function TemplateMessageContent({
       {payload.header_text ? (
         <p className="mb-1 text-sm font-semibold">{payload.header_text}</p>
       ) : null}
-      <WhatsAppTemplateText text={payload.body_text} />
+      {/* Migration 064 drops body_text from the stored payload when it
+          equals content_text, so fall back to the message text. */}
+      <WhatsAppTemplateText text={payload.body_text || message.content_text || ""} />
       {payload.footer_text ? (
         <p className="mt-1.5 text-xs text-white/70">
           {payload.footer_text}
