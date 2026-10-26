@@ -384,12 +384,22 @@ export function ConversationList({
     let cancelled = false;
     (async () => {
       const { data } = await supabase.from("tags").select("*").order("name");
-      if (!cancelled && data) setTags(data as Tag[]);
+      // Tags are separate per WhatsApp number (migration 060).
+      if (!cancelled && data) {
+        setTags(
+          (data as Tag[]).filter(
+            (tag) =>
+              !whatsappNumberId ||
+              !tag.whatsapp_number_id ||
+              tag.whatsapp_number_id === whatsappNumberId,
+          ),
+        );
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [whatsappNumberId]);
 
   // Company options are derived from the loaded conversations — there's no
   // separate companies table, and only companies with a live conversation

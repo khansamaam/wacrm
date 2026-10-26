@@ -187,9 +187,14 @@ export async function createBroadcast(
       rejected++;
       continue;
     }
-    const { id } = await findOrCreateContact(db, accountId, auditUserId, {
-      phone: sanitized,
-    });
+    const { id } = await findOrCreateContact(
+      db,
+      accountId,
+      auditUserId,
+      { phone: sanitized },
+      // Recipients are contacts of the sending number (migration 060).
+      config.id,
+    );
     resolved.push({
       contactId: id,
       phone: sanitized,

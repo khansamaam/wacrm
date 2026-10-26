@@ -39,6 +39,9 @@ interface DealFormProps {
   onOpenChange: (open: boolean) => void;
   deal?: Deal | null;
   pipelineId: string;
+  /** The pipeline's WhatsApp number: deals link to that number's
+   *  contacts only (migration 060). */
+  pipelineNumberId?: string | null;
   stages: PipelineStage[];
   defaultStageId?: string;
   onSaved: () => void;
@@ -49,6 +52,7 @@ export function DealForm({
   onOpenChange,
   deal,
   pipelineId,
+  pipelineNumberId = null,
   stages,
   defaultStageId,
   onSaved,
@@ -112,8 +116,14 @@ export function DealForm({
     if (!open) return;
     let cancelled = false;
     (async () => {
+      let contactsQuery = supabase.from("contacts").select("*");
+      if (pipelineNumberId) {
+        contactsQuery = contactsQuery.or(
+          `whatsapp_number_id.eq.${pipelineNumberId},whatsapp_number_id.is.null`,
+        );
+      }
       const [c, p] = await Promise.all([
-        supabase.from("contacts").select("*").order("name"),
+        contactsQuery.order("name"),
         supabase.from("profiles").select("*").order("full_name"),
       ]);
       if (cancelled) return;
@@ -123,7 +133,7 @@ export function DealForm({
     return () => {
       cancelled = true;
     };
-  }, [open, supabase]);
+  }, [open, supabase, pipelineNumberId]);
 
   // Fetch linked conversation for the selected contact (newest open one).
   // Clearing on no-selection is sync with prop state; the populated

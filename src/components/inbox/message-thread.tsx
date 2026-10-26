@@ -67,6 +67,8 @@ interface MessageThreadProps {
   /** View-only access to this conversation's WhatsApp number: the thread
    *  can be read but not replied to, assigned or closed. */
   numberReadOnly?: boolean;
+  /** Business account (WABA) of the conversation's number. */
+  wabaId?: string | null;
   conversation: Conversation | null;
   contact: Contact | null;
   messages: Message[];
@@ -169,6 +171,7 @@ export function MessageThread({
   contactPanelOpen,
   onToggleContactPanel,
   numberReadOnly = false,
+  wabaId = null,
 }: MessageThreadProps) {
   const t = useTranslations("Inbox.messageThread");
   const tTimer = useTranslations("Inbox.sessionTimer");
@@ -1173,6 +1176,7 @@ export function MessageThread({
         open={templateModalOpen}
         onOpenChange={setTemplateModalOpen}
         onSelect={handleSendTemplate}
+        wabaId={wabaId}
       />
     </div>
   );

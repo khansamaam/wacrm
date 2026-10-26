@@ -30,6 +30,11 @@ import { useCan } from "@/hooks/use-can";
 import { useAuth } from "@/hooks/use-auth";
 import { GatedButton } from "@/components/ui/gated-button";
 import { useTranslations } from "next-intl";
+import { useWhatsAppNumbers } from "@/hooks/use-whatsapp-numbers";
+import {
+  defaultScopeNumberId,
+  matchesNumber,
+} from "@/components/whatsapp/number-scope-select";
 
 // Pipeline creation is admin-class (settings-tier write under
 // the new RLS); deal creation is operational and only requires
@@ -51,6 +56,9 @@ export default function PipelinesPage() {
   const canEditSettings = useCan("edit-settings");
   const canCreateDeals = useCan("send-messages");
   const { accountId } = useAuth();
+  // Pipelines are separate per WhatsApp number (migration 060).
+  const { numbers, selectedNumberId } = useWhatsAppNumbers();
+  const scopeNumberId = defaultScopeNumberId(numbers, selectedNumberId);
 
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [selectedPipelineId, setSelectedPipelineId] = useState<string>("");
@@ -71,7 +79,7 @@ export default function PipelinesPage() {
   const [defaultStageId, setDefaultStageId] = useState<string>("");
 
   // Guard against double-seeding (React StrictMode double-effect in dev).
-  const seedAttempted = useRef(false);
+  const seedAttempted = useRef<string | null>(null);
 
   const loadPipelines = useCallback(async () => {
     const { data, error } = await supabase
@@ -82,8 +90,10 @@ export default function PipelinesPage() {
       console.error("Failed to load pipelines:", error.message);
       return [];
     }
-    return data ?? [];
-  }, [supabase]);
+    return ((data ?? []) as Pipeline[]).filter((p) =>
+      matchesNumber(p.whatsapp_number_id, selectedNumberId),
+    );
+  }, [supabase, selectedNumberId]);
 
   const loadStages = useCallback(
     async (pipelineId: string) => {
@@ -120,7 +130,12 @@ export default function PipelinesPage() {
 
     const { data: pipeline, error } = await supabase
       .from("pipelines")
-      .insert({ user_id: user.id, account_id: accountId, name: "Sales Pipeline" })
+      .insert({
+        user_id: user.id,
+        account_id: accountId,
+        name: "Sales Pipeline",
+        ...(scopeNumberId ? { whatsapp_number_id: scopeNumberId } : {}),
+      })
       .select()
       .single();
 
@@ -138,7 +153,7 @@ export default function PipelinesPage() {
     await supabase.from("pipeline_stages").insert(stagesPayload);
 
     return pipeline as Pipeline;
-  }, [supabase, accountId]);
+  }, [supabase, accountId, scopeNumberId]);
 
   // Initial load + seed-if-empty
   useEffect(() => {
@@ -147,8 +162,16 @@ export default function PipelinesPage() {
       setLoading(true);
       let list = await loadPipelines();
 
-      if (list.length === 0 && !seedAttempted.current) {
-        seedAttempted.current = true;
+      // Seed once per number, and only once the numbers list has loaded
+      // (otherwise the seed would be created unscoped).
+      const seedKey = scopeNumberId ?? "unscoped";
+      if (
+        list.length === 0 &&
+        canEditSettings &&
+        (numbers.length === 0 || scopeNumberId) &&
+        seedAttempted.current !== seedKey
+      ) {
+        seedAttempted.current = seedKey;
         const seeded = await seedDefaultPipeline();
         if (seeded) list = await loadPipelines();
       }
@@ -167,7 +190,7 @@ export default function PipelinesPage() {
     return () => {
       cancelled = true;
     };
-  }, [loadPipelines, seedDefaultPipeline]);
+  }, [loadPipelines, seedDefaultPipeline, scopeNumberId, canEditSettings, numbers.length]);
 
   // Load stages + deals whenever selected pipeline changes.
   // Clearing on no-selection is a legitimate sync with URL/prop
@@ -269,7 +292,12 @@ export default function PipelinesPage() {
 
     const { data: pipeline, error } = await supabase
       .from("pipelines")
-      .insert({ user_id: user.id, account_id: accountId, name })
+      .insert({
+        user_id: user.id,
+        account_id: accountId,
+        name,
+        ...(scopeNumberId ? { whatsapp_number_id: scopeNumberId } : {}),
+      })
       .select()
       .single();
 
@@ -485,6 +513,7 @@ export default function PipelinesPage() {
         onOpenChange={setDealFormOpen}
         deal={editingDeal}
         pipelineId={selectedPipelineId}
+        pipelineNumberId={selectedPipeline?.whatsapp_number_id ?? null}
         stages={stages}
         defaultStageId={defaultStageId}
         onSaved={refreshDeals}

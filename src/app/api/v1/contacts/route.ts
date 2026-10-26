@@ -24,6 +24,10 @@ import {
   resolveAuditUserId,
   ContactError,
 } from '@/lib/api/v1/contacts';
+import {
+  resolveWhatsAppNumber,
+  WhatsAppNumberError,
+} from '@/lib/whatsapp/numbers';
 
 // PostgREST filter values are comma/paren-delimited; strip anything
 // that could break the `.or()` grammar before interpolating a search
@@ -39,6 +43,10 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const search = sanitizeSearch(url.searchParams.get('search') ?? '');
     const tag = url.searchParams.get('tag');
+    const numberFilter = url.searchParams.get('whatsapp_number_id');
+    if (numberFilter && !/^[0-9a-f-]{36}$/i.test(numberFilter)) {
+      return fail('bad_request', "'whatsapp_number_id' must be a UUID", 400);
+    }
 
     // When filtering by tag, add an aliased INNER join on contact_tags
     // used purely for the WHERE — the parent is kept only if it has the
@@ -61,6 +69,9 @@ export async function GET(request: Request) {
 
     if (tag) {
       query = query.eq('tag_filter.tag_id', tag);
+    }
+    if (numberFilter) {
+      query = query.eq('whatsapp_number_id', numberFilter);
     }
 
     query = query
@@ -112,6 +123,29 @@ export async function POST(request: Request) {
 
     const auditUserId = await resolveAuditUserId(ctx.supabase, ctx.accountId);
 
+    // Contacts are separate per WhatsApp number (migration 060). An
+    // explicit `whatsapp_number_id` picks the number; otherwise the
+    // workspace default. Workspaces without numbers keep unscoped contacts.
+    let whatsappNumberId: string | null = null;
+    try {
+      whatsappNumberId = (
+        await resolveWhatsAppNumber({
+          supabase: ctx.supabase,
+          accountId: ctx.accountId,
+          whatsappNumberId:
+            typeof body.whatsapp_number_id === 'string'
+              ? body.whatsapp_number_id
+              : null,
+          requireConnected: false,
+        })
+      ).id;
+    } catch (error) {
+      if (!(error instanceof WhatsAppNumberError)) throw error;
+      if (error.code !== 'not_configured') {
+        return fail('bad_request', error.message, 400);
+      }
+    }
+
     const { id, created } = await findOrCreateContact(
       ctx.supabase,
       ctx.accountId,
@@ -121,7 +155,8 @@ export async function POST(request: Request) {
         name: typeof body.name === 'string' ? body.name : undefined,
         email: typeof body.email === 'string' ? body.email : undefined,
         company: typeof body.company === 'string' ? body.company : undefined,
-      }
+      },
+      whatsappNumberId
     );
 
     if (Array.isArray(body.tags)) {

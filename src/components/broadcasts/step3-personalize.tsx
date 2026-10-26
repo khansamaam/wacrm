@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
+import { matchesNumber } from '@/components/whatsapp/number-scope-select';
 import {
   MEDIA_MAX_BYTES_BY_KIND,
   uploadAccountMedia,
@@ -45,6 +46,8 @@ interface Step3Props {
   onCarouselCardMediaUrlsChange: (urls: string[]) => void;
   onNext: () => void;
   onBack: () => void;
+  /** Sending number: custom fields are per number (migration 060). */
+  whatsappNumberId?: string | null;
 }
 
 const MEDIA_HEADER_TYPES = ['image', 'video', 'document'] as const;
@@ -91,6 +94,7 @@ export function Step3Personalize({
   onCarouselCardMediaUrlsChange,
   onNext,
   onBack,
+  whatsappNumberId = null,
 }: Step3Props) {
   const t = useTranslations('Broadcasts.wizard');
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
@@ -121,7 +125,11 @@ export function Step3Personalize({
       ]);
       if (cancelled) return;
 
-      setCustomFields(fieldsRes.data ?? []);
+      setCustomFields(
+        (fieldsRes.data ?? []).filter((field) =>
+          matchesNumber(field.whatsapp_number_id, whatsappNumberId)
+        )
+      );
       setLoadingFields(false);
 
       const contact = contactRes.data ?? null;
@@ -145,7 +153,7 @@ export function Step3Personalize({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [whatsappNumberId]);
 
   const placeholders = useMemo(() => {
     const texts = [

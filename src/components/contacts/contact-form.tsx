@@ -26,6 +26,13 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, AlertTriangle } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { useWhatsAppNumbers } from '@/hooks/use-whatsapp-numbers';
+import {
+  NumberScopeSelect,
+  defaultScopeNumberId,
+  matchesNumber,
+  writableNumbers,
+} from '@/components/whatsapp/number-scope-select';
 
 interface ContactFormProps {
   open: boolean;
@@ -50,6 +57,12 @@ export function ContactForm({
   const supabase = createClient();
   const { accountId } = useAuth();
   const isEdit = !!contact;
+  // Contacts are separate per WhatsApp number (migration 060).
+  const { numbers, selectedNumberId } = useWhatsAppNumbers();
+  const [numberId, setNumberId] = useState<string | null>(null);
+  const effectiveNumberId = isEdit
+    ? contact?.whatsapp_number_id ?? null
+    : numberId ?? defaultScopeNumberId(numbers, selectedNumberId);
 
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -78,6 +91,7 @@ export function ContactForm({
       setCompany(contact?.company ?? '');
       setSelectedTagIds(contactTags.map((ct) => ct.tag_id));
       setDupMatch(null);
+      setNumberId(null);
       fetchTags();
     }
   }, [open, contact]);
@@ -93,7 +107,12 @@ export function ContactForm({
     }
     setCheckingDup(true);
     try {
-      const existing = await findExistingContact(supabase, accountId, value);
+      const existing = await findExistingContact(
+        supabase,
+        accountId,
+        value,
+        effectiveNumberId,
+      );
       setDupMatch(
         existing
           ? { contact: existing, exact: isExactMatch(existing, value) }
@@ -113,6 +132,11 @@ export function ContactForm({
     if (data) setTags(data);
     setLoadingTags(false);
   }
+
+  // Only tags of the contact's number can be applied (migration 060).
+  const numberTags = tags.filter((tag) =>
+    matchesNumber(tag.whatsapp_number_id, effectiveNumberId)
+  );
 
   function toggleTag(tagId: string) {
     setSelectedTagIds((prev) =>
@@ -171,6 +195,9 @@ export function ContactForm({
             phone: phone.trim(),
             email: email.trim() || null,
             company: company.trim() || null,
+            ...(effectiveNumberId
+              ? { whatsapp_number_id: effectiveNumberId }
+              : {}),
           })
           .select('id')
           .single();
@@ -208,6 +235,7 @@ export function ContactForm({
             supabase,
             accountId,
             phone.trim(),
+            effectiveNumberId,
           );
           if (existing) setDupMatch({ contact: existing, exact: true });
         }
@@ -235,6 +263,17 @@ export function ContactForm({
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          <NumberScopeSelect
+            numbers={isEdit ? numbers : writableNumbers(numbers)}
+            value={effectiveNumberId}
+            locked={isEdit}
+            onChange={(id) => {
+              setNumberId(id);
+              setDupMatch(null);
+              // Tags belong to a number: drop picks from the old one.
+              setSelectedTagIds([]);
+            }}
+          />
           <div className="space-y-2">
             <Label htmlFor="cf-name" className="text-muted-foreground">
               {t('nameLabel')}
@@ -330,13 +369,13 @@ export function ContactForm({
                 <Loader2 className="size-3 animate-spin" />
                 {t('loadingTags')}
               </div>
-            ) : tags.length === 0 ? (
+            ) : numberTags.length === 0 ? (
               <p className="text-xs text-muted-foreground">
                 {t('noTagsAvailable')}
               </p>
             ) : (
               <div className="flex flex-wrap gap-1.5">
-                {tags.map((tag) => {
+                {numberTags.map((tag) => {
                   const selected = selectedTagIds.includes(tag.id);
                   return (
                     <button

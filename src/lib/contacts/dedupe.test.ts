@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   dedupeByPhone,
   findExistingContact,
+  insertContactRow,
   isExactMatch,
   isUniqueViolation,
   normalizeKey,
@@ -99,5 +100,104 @@ describe("findExistingContact", () => {
   it("returns null for an empty phone without querying", async () => {
     const db = stubDb([{ id: "c1", phone: "15551234567" }]);
     expect(await findExistingContact(db, "acct", "   ")).toBeNull();
+  });
+});
+
+describe("findExistingContact — per WhatsApp number (migration 060)", () => {
+  function numberDb(
+    rows: Array<Record<string, unknown>>,
+    opts: { missingColumn?: boolean } = {},
+  ) {
+    const orCalls: string[] = [];
+    const db = {
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            like: () => {
+              const all = Promise.resolve({ data: rows, error: null });
+              return Object.assign(all, {
+                or: (filter: string) => {
+                  orCalls.push(filter);
+                  return Promise.resolve(
+                    opts.missingColumn
+                      ? { data: null, error: { code: "42703", message: "column contacts.whatsapp_number_id does not exist" } }
+                      : {
+                          data: rows.filter(
+                            (r) =>
+                              r.whatsapp_number_id === "num-a" ||
+                              r.whatsapp_number_id === null,
+                          ),
+                          error: null,
+                        },
+                  );
+                },
+              });
+            },
+          }),
+        }),
+      }),
+    } as unknown as SupabaseClient;
+    return { db, orCalls };
+  }
+
+  const rows = [
+    { id: "on-b", phone: "+971501234567", whatsapp_number_id: "num-b" },
+    { id: "unscoped", phone: "+971501234567", whatsapp_number_id: null },
+    { id: "on-a", phone: "+971501234567", whatsapp_number_id: "num-a" },
+  ];
+
+  it("only considers the number's contacts and prefers them over unscoped ones", async () => {
+    const { db, orCalls } = numberDb(rows);
+    const found = await findExistingContact(db, "acct", "+971501234567", "num-a");
+    expect(found?.id).toBe("on-a");
+    expect(orCalls).toEqual(["whatsapp_number_id.eq.num-a,whatsapp_number_id.is.null"]);
+  });
+
+  it("falls back to an unscoped contact when the number has none", async () => {
+    const { db } = numberDb(rows.filter((r) => r.id !== "on-a"));
+    const found = await findExistingContact(db, "acct", "+971501234567", "num-a");
+    expect(found?.id).toBe("unscoped");
+  });
+
+  it("never returns another number's contact", async () => {
+    const { db } = numberDb([rows[0]]);
+    expect(await findExistingContact(db, "acct", "+971501234567", "num-a")).toBeNull();
+  });
+
+  it("works before migration 060 (column missing) like before", async () => {
+    const { db } = numberDb([rows[0]], { missingColumn: true });
+    const found = await findExistingContact(db, "acct", "+971501234567", "num-a");
+    expect(found?.id).toBe("on-b");
+  });
+});
+
+describe("insertContactRow", () => {
+  it("retries without whatsapp_number_id when the column does not exist yet", async () => {
+    const inserts: Array<Record<string, unknown>> = [];
+    const db = {
+      from: () => ({
+        insert: (values: Record<string, unknown>) => {
+          inserts.push(values);
+          return {
+            select: () => ({
+              single: () =>
+                Promise.resolve(
+                  "whatsapp_number_id" in values
+                    ? { data: null, error: { code: "PGRST204", message: "Could not find the 'whatsapp_number_id' column" } }
+                    : { data: { id: "c1", phone: "1" }, error: null },
+                ),
+            }),
+          };
+        },
+      }),
+    } as unknown as SupabaseClient;
+    const { data, error } = await insertContactRow(db, {
+      phone: "1",
+      whatsapp_number_id: "num-a",
+    });
+    expect(error).toBeNull();
+    expect(data?.id).toBe("c1");
+    expect(inserts).toHaveLength(2);
+    expect(inserts[1]).not.toHaveProperty("whatsapp_number_id");
   });
 });

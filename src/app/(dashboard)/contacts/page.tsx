@@ -58,6 +58,7 @@ import { useCan } from '@/hooks/use-can';
 import { GatedButton } from '@/components/ui/gated-button';
 import { useTranslations } from 'next-intl';
 import { useWhatsAppNumbers } from '@/hooks/use-whatsapp-numbers';
+import { matchesNumber } from '@/components/whatsapp/number-scope-select';
 import { WhatsAppNumberFilter } from '@/components/whatsapp/number-filter';
 
 const PAGE_SIZE = 100;
@@ -298,9 +299,10 @@ export default function ContactsPage() {
 
   // Tag filter helpers. Every change resets to page 0 — the result set
   // shrinks/grows so page N may no longer be valid (mirrors the search box).
-  const allTags = Object.values(tagsMap).sort((a, b) =>
-    a.name.localeCompare(b.name)
-  );
+  // Tags are separate per WhatsApp number (migration 060).
+  const allTags = Object.values(tagsMap)
+    .filter((tag) => matchesNumber(tag.whatsapp_number_id, selectedNumberId))
+    .sort((a, b) => a.name.localeCompare(b.name));
   const hasActiveFilters = search.trim().length > 0 || selectedTagIds.length > 0;
 
   function toggleTagFilter(tagId: string) {
@@ -330,6 +332,7 @@ export default function ContactsPage() {
         <div className="flex items-center gap-2">
           <WhatsAppNumberFilter numbers={numbers} value={selectedNumberId} onChange={(value) => {
             setSelectedNumberId(value);
+            setSelectedTagIds([]);
             setPage(0);
           }} />
           {canEditSettings && (

@@ -4,7 +4,12 @@ import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
 import { getMediaUrl } from '@/lib/whatsapp/meta-api'
 import { normalizePhone } from '@/lib/whatsapp/phone-utils'
-import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe'
+import {
+  claimContactForNumber,
+  findExistingContact,
+  insertContactRow,
+  isUniqueViolation,
+} from '@/lib/contacts/dedupe'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
 import { matchesWebhookVerifyToken } from '@/lib/whatsapp/webhook-verification'
 import {
@@ -862,7 +867,8 @@ async function processMessage(
     accountId,
     configOwnerUserId,
     senderPhone,
-    contactName
+    contactName,
+    whatsappNumberId,
   )
   if (!contactOutcome) return
   const contactRecord = contactOutcome.contact
@@ -1267,7 +1273,9 @@ async function findOrCreateContact(
   accountId: string,
   configOwnerUserId: string,
   phone: string,
-  name: string
+  name: string,
+  // Contacts are separate per WhatsApp number (migration 060).
+  whatsappNumberId: string,
 ): Promise<ContactOutcome | null> {
   // Find an existing contact for this account by phone. The shared
   // helper pre-filters in SQL by the last-8-digit suffix (so we don't
@@ -1279,9 +1287,11 @@ async function findOrCreateContact(
     supabaseAdmin(),
     accountId,
     phone,
+    whatsappNumberId,
   )
 
   if (existingContact) {
+    await claimContactForNumber(supabaseAdmin(), existingContact, whatsappNumberId)
     // Update name if it changed
     if (name && name !== existingContact.name) {
       await supabaseAdmin()
@@ -1296,16 +1306,16 @@ async function findOrCreateContact(
   // user_id is the NOT NULL FK audit column (no inbound message
   // has a single "user who created" it — we attribute to the
   // WhatsApp config owner as a stable default).
-  const { data: newContact, error: createError } = await supabaseAdmin()
-    .from('contacts')
-    .insert({
+  const { data: newContact, error: createError } = await insertContactRow(
+    supabaseAdmin(),
+    {
       account_id: accountId,
       user_id: configOwnerUserId,
       phone,
       name: name || phone,
-    })
-    .select()
-    .single()
+      whatsapp_number_id: whatsappNumberId,
+    },
+  )
 
   if (createError) {
     // Lost a race: a concurrent inbound delivery (or another path)
@@ -1313,7 +1323,12 @@ async function findOrCreateContact(
     // unique index (migration 022) rejected the duplicate. Re-resolve
     // the existing row instead of dropping the message.
     if (isUniqueViolation(createError)) {
-      const raced = await findExistingContact(supabaseAdmin(), accountId, phone)
+      const raced = await findExistingContact(
+        supabaseAdmin(),
+        accountId,
+        phone,
+        whatsappNumberId,
+      )
       if (raced) return { contact: raced, wasCreated: false }
     }
     console.error('Error creating contact:', createError)

@@ -243,6 +243,10 @@ export default function NewBroadcastPage() {
               onSelect={handleTemplateSelect}
               onNext={() => setCurrentStep(1)}
               onBack={() => router.push('/broadcasts')}
+              wabaId={
+                numbers.find((number) => number.id === sendingNumberId)
+                  ?.waba_id ?? null
+              }
             />
           )}
           {currentStep === 1 && (
@@ -251,6 +255,7 @@ export default function NewBroadcastPage() {
               onUpdate={setAudience}
               onNext={() => setCurrentStep(2)}
               onBack={() => setCurrentStep(0)}
+              whatsappNumberId={sendingNumberId || null}
             />
           )}
           {currentStep === 2 && template && (
@@ -262,6 +267,7 @@ export default function NewBroadcastPage() {
               onHeaderMediaUrlChange={setHeaderMediaUrl}
               carouselCardMediaUrls={carouselCardMediaUrls}
               onCarouselCardMediaUrlsChange={setCarouselCardMediaUrls}
+              whatsappNumberId={sendingNumberId || null}
               onNext={() => setCurrentStep(3)}
               onBack={() => setCurrentStep(1)}
             />

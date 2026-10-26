@@ -16,6 +16,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Loader2, Plus, Trash2 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { useWhatsAppNumbers } from '@/hooks/use-whatsapp-numbers';
+import {
+  NumberScopeSelect,
+  defaultScopeNumberId,
+  matchesNumber,
+  writableNumbers,
+} from '@/components/whatsapp/number-scope-select';
 
 interface CustomFieldsManagerProps {
   open: boolean;
@@ -55,6 +62,11 @@ export function CustomFieldsManager({
  * `custom_fields` RLS also rejects non-admin writes as defense in depth.
  */
 export function CustomFieldsPanel() {
+  // Custom fields are separate per WhatsApp number (migration 060).
+  const { numbers, selectedNumberId } = useWhatsAppNumbers();
+  const [numberChoice, setNumberChoice] = useState<string | null>(null);
+  const createNumberId =
+    numberChoice ?? defaultScopeNumberId(numbers, selectedNumberId);
   const t = useTranslations('Contacts.customFields');
   const supabase = createClient();
   const { user, accountId } = useAuth();
@@ -86,11 +98,18 @@ export function CustomFieldsPanel() {
     }
   }, [accountId, fetchFields]);
 
-  /** Case-insensitive name clash within the loaded list. */
+  const visibleFields = fields.filter((f) =>
+    matchesNumber(f.whatsapp_number_id, selectedNumberId)
+  );
+
+  /** Case-insensitive name clash among the target number's fields. */
   function isDuplicate(name: string, exceptId?: string): boolean {
     const lower = name.toLowerCase();
     return fields.some(
-      (f) => f.id !== exceptId && f.field_name.toLowerCase() === lower
+      (f) =>
+        f.id !== exceptId &&
+        matchesNumber(f.whatsapp_number_id, createNumberId) &&
+        f.field_name.toLowerCase() === lower
     );
   }
 
@@ -112,6 +131,7 @@ export function CustomFieldsPanel() {
       field_type: 'text',
       user_id: user.id,
       account_id: accountId,
+      ...(createNumberId ? { whatsapp_number_id: createNumberId } : {}),
     });
     setCreating(false);
 
@@ -174,6 +194,12 @@ export function CustomFieldsPanel() {
 
   return (
     <div className="space-y-4">
+      <NumberScopeSelect
+        numbers={writableNumbers(numbers)}
+        value={createNumberId}
+        onChange={setNumberChoice}
+        label="New fields are added to"
+      />
       {/* Create */}
       <div className="flex items-center gap-2">
         <Input
@@ -209,13 +235,13 @@ export function CustomFieldsPanel() {
             <Loader2 className="size-4 animate-spin" />
             {t('loading')}
           </div>
-        ) : fields.length === 0 ? (
+        ) : visibleFields.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
             {t('empty')}
           </p>
         ) : (
           <ul className="divide-y divide-border">
-            {fields.map((field) => (
+            {visibleFields.map((field) => (
               <FieldRow
                 key={field.id}
                 field={field}

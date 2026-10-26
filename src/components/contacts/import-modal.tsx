@@ -38,6 +38,12 @@ import {
   Tag,
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { useWhatsAppNumbers } from '@/hooks/use-whatsapp-numbers';
+import {
+  NumberScopeSelect,
+  defaultScopeNumberId,
+  writableNumbers,
+} from '@/components/whatsapp/number-scope-select';
 
 const DEFAULT_TAG_COLOR = '#3b82f6';
 const PREVIEW_LIMIT = 5;
@@ -130,6 +136,11 @@ export function ImportModal({
   const supabase = createClient();
   const { accountId, canEditSettings } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Imported contacts belong to one WhatsApp number (migration 060).
+  const { numbers, selectedNumberId } = useWhatsAppNumbers();
+  const [numberChoice, setNumberChoice] = useState<string | null>(null);
+  const importNumberId =
+    numberChoice ?? defaultScopeNumberId(numbers, selectedNumberId);
 
   const [file, setFile] = useState<File | null>(null);
   const [parsedRows, setParsedRows] = useState<ParsedContactRow[]>([]);
@@ -153,6 +164,7 @@ export function ImportModal({
     setHasCompanyColumn(false);
     setTagColorByKey(new Map());
     setResult(null);
+    setNumberChoice(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   }
 
@@ -226,19 +238,30 @@ export function ImportModal({
       const { unique, duplicates: inFileDupes } = dedupeByPhone(parsedRows);
       skipped += inFileDupes;
 
-      // 2) Skip numbers already in this account. One read of the
-      //    generated `phone_normalized` column (migration 022) → Set.
-      const { data: existingRows } = await supabase
-        .from('contacts')
-        .select('phone_normalized')
-        .eq('account_id', accountId);
-      const existing = new Set(
-        (existingRows ?? [])
-          .map(
-            (r) => (r as { phone_normalized: string | null }).phone_normalized
-          )
-          .filter((p): p is string => !!p)
-      );
+      // 2) Skip phones already on this number (contacts are separate per
+      //    number, migration 060). Paged: a single select is capped at
+      //    1000 rows by the API, which would miss most existing phones.
+      const existing = new Set<string>();
+      const pageSize = 1000;
+      for (let from = 0; ; from += pageSize) {
+        let query = supabase
+          .from('contacts')
+          .select('phone_normalized')
+          .eq('account_id', accountId);
+        if (importNumberId) {
+          query = query.eq('whatsapp_number_id', importNumberId);
+        }
+        const { data: page, error: pageError } = await query
+          .order('id')
+          .range(from, from + pageSize - 1);
+        if (pageError) throw pageError;
+        for (const r of page ?? []) {
+          const normalized = (r as { phone_normalized: string | null })
+            .phone_normalized;
+          if (normalized) existing.add(normalized);
+        }
+        if (!page || page.length < pageSize) break;
+      }
 
       const toInsert = unique.filter((row) => {
         if (existing.has(normalizeKey(row.phone))) {
@@ -259,6 +282,7 @@ export function ImportModal({
           userId: user.id,
           tagNames: allTagNames,
           canCreateTags: canEditSettings,
+          whatsappNumberId: importNumberId,
         }));
       }
 
@@ -278,6 +302,7 @@ export function ImportModal({
           name: row.name || null,
           email: row.email || null,
           company: row.company || null,
+          ...(importNumberId ? { whatsapp_number_id: importNumberId } : {}),
         }));
 
         const { data, error } = await supabase
@@ -410,6 +435,13 @@ export function ImportModal({
               }}
             />
           </DialogHeader>
+
+          <NumberScopeSelect
+            numbers={writableNumbers(numbers)}
+            value={importNumberId}
+            onChange={setNumberChoice}
+            label="Import into WhatsApp number"
+          />
 
           <div
             role="button"

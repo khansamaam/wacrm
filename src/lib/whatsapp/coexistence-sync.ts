@@ -273,7 +273,13 @@ async function processEvent(db: SupabaseClient, event: SyncEventRow): Promise<vo
   if (event.event_type === 'smb_app_state_sync') {
     const auditUserId = await resolveAuditUserId(db, event.account_id)
     for (const contact of extractContacts(event.payload)) {
-      await findOrCreateContact(db, event.account_id, auditUserId, contact)
+      await findOrCreateContact(
+        db,
+        event.account_id,
+        auditUserId,
+        contact,
+        event.whatsapp_number_id,
+      )
     }
   }
 

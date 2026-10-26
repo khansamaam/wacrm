@@ -1,5 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+import { isMissingNumberColumn } from './dedupe';
+
 const DEFAULT_TAG_COLOR = '#3b82f6';
 
 export interface ResolveImportTagsResult {
@@ -26,9 +28,12 @@ export async function resolveImportTagIds(
     tagNames: string[];
     canCreateTags: boolean;
     defaultColor?: string;
+    /** Tags are separate per WhatsApp number (migration 060): match and
+     *  create tags of this number (unscoped legacy tags also match). */
+    whatsappNumberId?: string | null;
   }
 ): Promise<ResolveImportTagsResult> {
-  const { accountId, userId, tagNames, canCreateTags } = params;
+  const { accountId, userId, tagNames, canCreateTags, whatsappNumberId } = params;
   const defaultColor = params.defaultColor ?? DEFAULT_TAG_COLOR;
 
   const uniqueNames: string[] = [];
@@ -46,17 +51,31 @@ export async function resolveImportTagIds(
     return { tagIdByKey: new Map(), skippedNames: [] };
   }
 
-  const { data: existing, error: fetchError } = await supabase
-    .from('tags')
-    .select('id, name')
-    .eq('account_id', accountId);
+  const baseQuery = () =>
+    supabase.from('tags').select('*').eq('account_id', accountId);
+  let { data: existing, error: fetchError } = whatsappNumberId
+    ? await baseQuery().or(
+        `whatsapp_number_id.eq.${whatsappNumberId},whatsapp_number_id.is.null`
+      )
+    : await baseQuery();
+  let numberColumnExists = true;
+  if (fetchError && whatsappNumberId && isMissingNumberColumn(fetchError)) {
+    numberColumnExists = false;
+    ({ data: existing, error: fetchError } = await baseQuery());
+  }
 
   if (fetchError) throw fetchError;
 
   const tagIdByKey = new Map<string, string>();
-  for (const tag of existing ?? []) {
-    const key = tag.name.trim().toLowerCase();
-    if (!tagIdByKey.has(key)) tagIdByKey.set(key, tag.id);
+  // Tags of the number win over unscoped legacy tags with the same name.
+  const ordered = [...(existing ?? [])].sort(
+    (a, b) =>
+      Number(b.whatsapp_number_id === whatsappNumberId) -
+      Number(a.whatsapp_number_id === whatsappNumberId)
+  );
+  for (const tag of ordered) {
+    const key = String(tag.name).trim().toLowerCase();
+    if (!tagIdByKey.has(key)) tagIdByKey.set(key, tag.id as string);
   }
 
   const skippedNames: string[] = [];
@@ -78,6 +97,9 @@ export async function resolveImportTagIds(
           account_id: accountId,
           name,
           color: defaultColor,
+          ...(whatsappNumberId && numberColumnExists
+            ? { whatsapp_number_id: whatsappNumberId }
+            : {}),
         }))
       )
       .select('id, name');

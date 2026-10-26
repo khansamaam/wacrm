@@ -103,6 +103,8 @@ export interface AccountInvitation {
 }
 
 export interface Contact {
+  /** WhatsApp number this row belongs to (migration 060); null = unscoped. */
+  whatsapp_number_id?: string | null;
   id: string;
   user_id: string;
   account_id: string;
@@ -122,6 +124,8 @@ export interface Contact {
 }
 
 export interface Tag {
+  /** WhatsApp number this row belongs to (migration 060); null = unscoped. */
+  whatsapp_number_id?: string | null;
   id: string;
   user_id: string;
   name: string;
@@ -136,6 +140,8 @@ export interface ContactTag {
 }
 
 export interface CustomField {
+  /** WhatsApp number this row belongs to (migration 060); null = unscoped. */
+  whatsapp_number_id?: string | null;
   id: string;
   user_id: string;
   /** Tenancy key — NOT NULL since migration 017. */
@@ -433,6 +439,8 @@ export interface MessageTemplate {
 }
 
 export interface Pipeline {
+  /** WhatsApp number this row belongs to (migration 060); null = unscoped. */
+  whatsapp_number_id?: string | null;
   id: string;
   user_id: string;
   name: string;

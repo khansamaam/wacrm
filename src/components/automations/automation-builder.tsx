@@ -241,7 +241,17 @@ function useResources(): AutomationResources {
   return useContext(ResourcesContext)
 }
 
-function ResourcesProvider({ children }: { children: ReactNode }) {
+function ResourcesProvider({
+  children,
+  numberId = null,
+  wabaId = null,
+}: {
+  children: ReactNode
+  /** Automation's WhatsApp number: tags, fields, pipelines and templates
+   *  are per number / business account (migration 060). null = all. */
+  numberId?: string | null
+  wabaId?: string | null
+}) {
   const [tags, setTags] = useState<TagRecord[]>([])
   const [members, setMembers] = useState<AccountMember[]>([])
   const [templates, setTemplates] = useState<MessageTemplate[]>([])
@@ -267,7 +277,7 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
             .eq("status", "APPROVED")
             .order("name"),
           supabase.from("custom_fields").select("*").order("field_name"),
-          supabase.from("pipelines").select("id, name").order("name"),
+          supabase.from("pipelines").select("*").order("name"),
           supabase
             .from("pipeline_stages")
             .select("id, name, pipeline_id, position")
@@ -300,9 +310,35 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  const inScope = (rowNumberId: unknown) =>
+    !numberId || !rowNumberId || rowNumberId === numberId
+  const scopedTags = tags.filter((tag) =>
+    inScope((tag as { whatsapp_number_id?: string | null }).whatsapp_number_id)
+  )
+  const scopedFields = customFields.filter((field) =>
+    inScope(field.whatsapp_number_id)
+  )
+  const scopedPipelines = pipelines.filter((pipeline) =>
+    inScope((pipeline as { whatsapp_number_id?: string | null }).whatsapp_number_id)
+  )
+  const scopedPipelineIds = new Set(scopedPipelines.map((p) => p.id))
+  const scopedStages = stages.filter((stage) =>
+    scopedPipelineIds.has(stage.pipeline_id)
+  )
+  const scopedTemplates = templates.filter(
+    (template) => !wabaId || !template.waba_id || template.waba_id === wabaId
+  )
+
   return (
     <ResourcesContext.Provider
-      value={{ tags, members, templates, customFields, pipelines, stages }}
+      value={{
+        tags: scopedTags,
+        members,
+        templates: scopedTemplates,
+        customFields: scopedFields,
+        pipelines: scopedPipelines,
+        stages: scopedStages,
+      }}
     >
       {children}
     </ResourcesContext.Provider>
@@ -770,7 +806,12 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
       <div className="relative flex-1 overflow-y-auto">
         <div className="absolute inset-0 bg-[radial-gradient(circle,var(--border)_1px,transparent_1px)] [background-size:20px_20px] pointer-events-none" />
         <div className="relative mx-auto flex max-w-2xl flex-col items-center gap-0 px-4 py-10">
-          <ResourcesProvider>
+          <ResourcesProvider
+            numberId={effectiveNumberId}
+            wabaId={
+              numbers.find((n) => n.id === effectiveNumberId)?.waba_id ?? null
+            }
+          >
             {numbers.length > 1 && (
               <div className="mb-4 w-full rounded-xl border border-border bg-card p-4">
                 <label className="mb-1.5 block text-xs font-medium text-muted-foreground">

@@ -75,14 +75,12 @@ export async function loadMetrics(
     return query;
   };
   const contactCount = () => {
+    // Contacts belong to one WhatsApp number (migration 060).
     let query = db
       .from('contacts')
-      .select(
-        whatsappNumberId ? 'id, conversations!inner(whatsapp_number_id)' : 'id',
-        { count: 'exact', head: true }
-      );
+      .select('id', { count: 'exact', head: true });
     if (whatsappNumberId)
-      query = query.eq('conversations.whatsapp_number_id', whatsappNumberId);
+      query = query.eq('whatsapp_number_id', whatsappNumberId);
     return query;
   };
   const openDealsQuery = () => {
@@ -90,12 +88,13 @@ export async function loadMetrics(
       .from('deals')
       .select(
         whatsappNumberId
-          ? 'value, status, conversations!inner(whatsapp_number_id)'
+          ? 'value, status, pipeline:pipelines!inner(whatsapp_number_id)'
           : 'value, status'
       )
       .eq('status', 'open');
+    // Deals follow their pipeline's number (migration 060).
     if (whatsappNumberId) {
-      query = query.eq('conversations.whatsapp_number_id', whatsappNumberId);
+      query = query.eq('pipeline.whatsapp_number_id', whatsappNumberId);
     }
     return query;
   };
@@ -221,12 +220,12 @@ export async function loadPipelineDonut(
       .from('deals')
       .select(
         whatsappNumberId
-          ? 'stage_id, value, status, conversations!inner(whatsapp_number_id)'
+          ? 'stage_id, value, status, pipeline:pipelines!inner(whatsapp_number_id)'
           : 'stage_id, value, status'
       )
       .eq('status', 'open');
     if (whatsappNumberId) {
-      query = query.eq('conversations.whatsapp_number_id', whatsappNumberId);
+      query = query.eq('pipeline.whatsapp_number_id', whatsappNumberId);
     }
     return query;
   };
@@ -421,15 +420,11 @@ export async function loadActivity(
   const contactActivity = () => {
     let query = db
       .from('contacts')
-      .select(
-        whatsappNumberId
-          ? 'id, name, phone, created_at, conversations!inner(whatsapp_number_id)'
-          : 'id, name, phone, created_at'
-      )
+      .select('id, name, phone, created_at')
       .order('created_at', { ascending: false })
       .limit(10);
     if (whatsappNumberId) {
-      query = query.eq('conversations.whatsapp_number_id', whatsappNumberId);
+      query = query.eq('whatsapp_number_id', whatsappNumberId);
     }
     return query;
   };
@@ -438,13 +433,13 @@ export async function loadActivity(
       .from('deals')
       .select(
         whatsappNumberId
-          ? 'id, title, updated_at, stage:pipeline_stages(name), conversations!inner(whatsapp_number_id)'
+          ? 'id, title, updated_at, stage:pipeline_stages(name), pipeline:pipelines!inner(whatsapp_number_id)'
           : 'id, title, updated_at, stage:pipeline_stages(name)'
       )
       .order('updated_at', { ascending: false })
       .limit(10);
     if (whatsappNumberId) {
-      query = query.eq('conversations.whatsapp_number_id', whatsappNumberId);
+      query = query.eq('pipeline.whatsapp_number_id', whatsappNumberId);
     }
     return query;
   };

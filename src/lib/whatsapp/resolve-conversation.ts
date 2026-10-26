@@ -20,7 +20,12 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe';
+import {
+  claimContactForNumber,
+  findExistingContact,
+  insertContactRow,
+  isUniqueViolation,
+} from '@/lib/contacts/dedupe';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
 import { SendMessageError } from '@/lib/whatsapp/send-message';
 import { resolveAuditUserId, ContactError } from '@/lib/api/v1/contacts';
@@ -117,9 +122,17 @@ export async function resolveConversationByPhone(
   let contactId: string;
   let contactCreated = false;
 
-  const existing = await findExistingContact(db, accountId, sanitized);
+  // Contacts are separate per WhatsApp number (migration 060): the contact
+  // is looked up / created on the same number as the conversation.
+  const existing = await findExistingContact(
+    db,
+    accountId,
+    sanitized,
+    resolvedNumberId,
+  );
   if (existing) {
     contactId = existing.id;
+    await claimContactForNumber(db, existing, resolvedNumberId);
     if (name && name !== existing.name) {
       await db
         .from('contacts')
@@ -127,22 +140,24 @@ export async function resolveConversationByPhone(
         .eq('id', existing.id);
     }
   } else {
-    const { data: created, error: createErr } = await db
-      .from('contacts')
-      .insert({
-        account_id: accountId,
-        user_id: ownerUserId,
-        phone: sanitized,
-        name: name || sanitized,
-      })
-      .select('id')
-      .single();
+    const { data: created, error: createErr } = await insertContactRow(db, {
+      account_id: accountId,
+      user_id: ownerUserId,
+      phone: sanitized,
+      name: name || sanitized,
+      ...(resolvedNumberId ? { whatsapp_number_id: resolvedNumberId } : {}),
+    });
 
     if (createErr || !created) {
       // Lost a race against a concurrent inbound/API create — the
       // unique index (migration 022) rejected the duplicate. Re-resolve.
       if (isUniqueViolation(createErr)) {
-        const raced = await findExistingContact(db, accountId, sanitized);
+        const raced = await findExistingContact(
+          db,
+          accountId,
+          sanitized,
+          resolvedNumberId,
+        );
         if (raced) {
           contactId = raced.id;
         } else {

@@ -46,6 +46,9 @@ interface TemplatePickerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSelect: (template: MessageTemplate, values: TemplateSendValues) => void;
+  /** Business account (WABA) of the conversation's number: only its
+   *  templates can be sent from that number. */
+  wabaId?: string | null;
 }
 
 function renderBodyPreview(body: string, params: string[]): string {
@@ -125,6 +128,7 @@ export function TemplatePicker({
   open,
   onOpenChange,
   onSelect,
+  wabaId = null,
 }: TemplatePickerProps) {
   const t = useTranslations("Inbox.templatePicker");
 
@@ -174,7 +178,12 @@ export function TemplatePicker({
         console.error("Failed to fetch templates:", error);
         setTemplates([]);
       } else {
-        setTemplates((data as MessageTemplate[]) ?? []);
+        setTemplates(
+          ((data as MessageTemplate[]) ?? []).filter(
+            (template) =>
+              !wabaId || !template.waba_id || template.waba_id === wabaId,
+          ),
+        );
       }
       setLoading(false);
     })();

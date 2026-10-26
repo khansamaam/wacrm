@@ -18,9 +18,11 @@ interface Step1Props {
   onSelect: (template: MessageTemplate) => void;
   onNext: () => void;
   onBack: () => void;
+  /** Sending number's business account (WABA): templates are per WABA. */
+  wabaId?: string | null;
 }
 
-export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack }: Step1Props) {
+export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack, wabaId = null }: Step1Props) {
   const t = useTranslations('Broadcasts.wizard');
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -40,7 +42,12 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
           .order('created_at', { ascending: false });
 
         if (fetchError) throw fetchError;
-        setTemplates(data ?? []);
+        setTemplates(
+          (data ?? []).filter(
+            (template) =>
+              !wabaId || !template.waba_id || template.waba_id === wabaId
+          )
+        );
       } catch (err) {
         setError(err instanceof Error ? err.message : t('chooseTemplate.errorLoad'));
       } finally {
@@ -49,7 +56,7 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
     }
 
     fetchTemplates();
-  }, []);
+  }, [wabaId]);
 
   if (loading) {
     return (

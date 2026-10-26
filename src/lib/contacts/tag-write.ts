@@ -23,13 +23,13 @@ async function assertContactAndTagOwnership(
   const [contactResult, tagResult] = await Promise.all([
     db
       .from('contacts')
-      .select('id')
+      .select('*')
       .eq('id', input.contactId)
       .eq('account_id', input.accountId)
       .maybeSingle(),
     db
       .from('tags')
-      .select('id')
+      .select('*')
       .eq('id', input.tagId)
       .eq('account_id', input.accountId)
       .maybeSingle(),
@@ -43,6 +43,16 @@ async function assertContactAndTagOwnership(
   }
   if (!tagResult.data) {
     throw new ContactTagWriteError('Tag not found', 404);
+  }
+  // Tags are separate per WhatsApp number (migration 060). The database
+  // trigger enforces this too; checking here gives a clear 400.
+  const contactNumber = contactResult.data.whatsapp_number_id as string | null | undefined;
+  const tagNumber = tagResult.data.whatsapp_number_id as string | null | undefined;
+  if (contactNumber && tagNumber && contactNumber !== tagNumber) {
+    throw new ContactTagWriteError(
+      'This tag belongs to a different WhatsApp number than the contact',
+      400
+    );
   }
 }
 

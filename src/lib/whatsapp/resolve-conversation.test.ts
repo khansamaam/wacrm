@@ -59,7 +59,10 @@ function makeDb(script: Script): SupabaseClient {
         ? (script.contactCandidatesByCall[likeCalls] ?? [])
         : (script.contactCandidates ?? []);
       likeCalls++;
-      return Promise.resolve({ data, error: null });
+      // Awaitable directly, or after the per-number `.or()` filter
+      // (migration 060) — same candidates either way.
+      const result = Promise.resolve({ data, error: null });
+      return Object.assign(result, { or: () => result });
     },
     maybeSingle: () => {
       if (table === 'whatsapp_numbers') {

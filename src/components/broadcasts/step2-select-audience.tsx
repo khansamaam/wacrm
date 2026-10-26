@@ -19,6 +19,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { matchesNumber } from '@/components/whatsapp/number-scope-select';
 
 type AudienceType = 'all' | 'tags' | 'custom_field' | 'csv';
 type CustomFieldOperator = 'is' | 'is_not' | 'contains';
@@ -41,6 +42,8 @@ interface Step2Props {
   onUpdate: (audience: AudienceConfig) => void;
   onNext: () => void;
   onBack: () => void;
+  /** Sending number: audiences, tags and fields are per number (060). */
+  whatsappNumberId?: string | null;
 }
 
 export function Step2SelectAudience({
@@ -48,6 +51,7 @@ export function Step2SelectAudience({
   onUpdate,
   onNext,
   onBack,
+  whatsappNumberId = null,
 }: Step2Props) {
   const t = useTranslations('Broadcasts.wizard');
   const csvInputRef = useRef<HTMLInputElement>(null);
@@ -107,13 +111,17 @@ export function Step2SelectAudience({
       try {
         const supabase = createClient();
         const { data } = await supabase.from('tags').select('*').order('name');
-        setTags(data ?? []);
+        setTags(
+          (data ?? []).filter((tag) =>
+            matchesNumber(tag.whatsapp_number_id, whatsappNumberId)
+          )
+        );
       } finally {
         setLoadingTags(false);
       }
     }
     fetchTags();
-  }, []);
+  }, [whatsappNumberId]);
 
   // Lazy-load custom fields only when that audience type is active.
   useEffect(() => {
@@ -126,13 +134,17 @@ export function Step2SelectAudience({
           .from('custom_fields')
           .select('*')
           .order('field_name');
-        setCustomFields(data ?? []);
+        setCustomFields(
+          (data ?? []).filter((field) =>
+            matchesNumber(field.whatsapp_number_id, whatsappNumberId)
+          )
+        );
       } finally {
         setLoadingFields(false);
       }
     }
     fetchFields();
-  }, [audience.type]);
+  }, [audience.type, whatsappNumberId]);
 
   const fetchEstimatedCount = useCallback(async () => {
     setLoadingCount(true);
@@ -199,9 +211,15 @@ export function Step2SelectAudience({
         setEstimatedCount(effective.length);
       } else {
         // "All" — fetch the total, then subtract exclude set if any.
-        const { count } = await supabase
+        let countQuery = supabase
           .from('contacts')
           .select('*', { count: 'exact', head: true });
+        if (whatsappNumberId) {
+          countQuery = countQuery.or(
+            `whatsapp_number_id.eq.${whatsappNumberId},whatsapp_number_id.is.null`,
+          );
+        }
+        const { count } = await countQuery;
         const total = count ?? 0;
         setEstimatedCount(excludeSet ? Math.max(0, total - excludeSet.size) : total);
       }
@@ -214,6 +232,7 @@ export function Step2SelectAudience({
     audience.customField,
     audience.csvContacts,
     audience.excludeTagIds,
+    whatsappNumberId,
   ]);
 
   useEffect(() => {

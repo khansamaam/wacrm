@@ -145,7 +145,9 @@ export async function POST(request: Request) {
       // caller can't open a conversation against someone else's contact.
       const { data: contactRow, error: contactErr } = await supabase
         .from('contacts')
-        .select('id')
+        // '*' rather than naming whatsapp_number_id keeps this working
+        // before migration 060 adds the column.
+        .select('*')
         .eq('id', contact_id)
         .eq('account_id', accountId)
         .maybeSingle()
@@ -163,8 +165,11 @@ export async function POST(request: Request) {
           await resolveWhatsAppNumber({
             supabase,
             accountId,
+            // A contact belongs to one WhatsApp number (migration 060):
+            // its thread is always on that number.
             whatsappNumberId:
-              typeof whatsapp_number_id === 'string' ? whatsapp_number_id : null,
+              (contactRow.whatsapp_number_id as string | null | undefined) ??
+              (typeof whatsapp_number_id === 'string' ? whatsapp_number_id : null),
           })
         ).id
       } catch (error) {

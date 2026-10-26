@@ -61,14 +61,22 @@ export const resolveVariables = resolveBroadcastVariables;
 
 async function fetchAllContacts(
   supabase: BrowserSupabaseClient,
-  accountId: string
+  accountId: string,
+  whatsappNumberId: string | null
 ): Promise<Contact[]> {
   const contacts: Contact[] = [];
   for (let from = 0; ; from += QUERY_PAGE_SIZE) {
-    const { data, error } = await supabase
+    let query = supabase
       .from('contacts')
       .select('*')
-      .eq('account_id', accountId)
+      .eq('account_id', accountId);
+    // Contacts are separate per WhatsApp number (migration 060).
+    if (whatsappNumberId) {
+      query = query.or(
+        `whatsapp_number_id.eq.${whatsappNumberId},whatsapp_number_id.is.null`
+      );
+    }
+    const { data, error } = await query
       .order('id')
       .range(from, from + QUERY_PAGE_SIZE - 1);
     if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
@@ -178,7 +186,8 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     supabase: BrowserSupabaseClient,
     activeAccountId: string,
     userId: string,
-    csvRows: { phone: string; name?: string }[]
+    csvRows: { phone: string; name?: string }[],
+    whatsappNumberId: string | null
   ): Promise<Contact[]> {
     const uniqueByPhone = new Map<string, { phone: string; name?: string }>();
     for (const row of csvRows) if (row.phone) uniqueByPhone.set(row.phone, row);
@@ -186,11 +195,15 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     const byPhone = new Map<string, Contact>();
 
     for (let i = 0; i < phones.length; i += IN_FILTER_CHUNK_SIZE) {
-      const { data, error } = await supabase
+      let lookup = supabase
         .from('contacts')
         .select('*')
         .eq('account_id', activeAccountId)
         .in('phone_normalized', phones.slice(i, i + IN_FILTER_CHUNK_SIZE));
+      if (whatsappNumberId) {
+        lookup = lookup.eq('whatsapp_number_id', whatsappNumberId);
+      }
+      const { data, error } = await lookup;
       if (error)
         throw new Error(`Failed to look up CSV contacts: ${error.message}`);
       for (const contact of (data ?? []) as Contact[]) {
@@ -206,6 +219,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         account_id: activeAccountId,
         phone,
         name: uniqueByPhone.get(phone)?.name ?? null,
+        ...(whatsappNumberId ? { whatsapp_number_id: whatsappNumberId } : {}),
       }));
     for (let i = 0; i < missing.length; i += INSERT_BATCH_SIZE) {
       const { data, error } = await supabase
@@ -229,11 +243,16 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     supabase: BrowserSupabaseClient,
     activeAccountId: string,
     userId: string,
-    audience: AudienceConfig
+    audience: AudienceConfig,
+    whatsappNumberId: string | null
   ): Promise<Contact[]> {
     let contacts: Contact[] = [];
     if (audience.type === 'all') {
-      contacts = await fetchAllContacts(supabase, activeAccountId);
+      contacts = await fetchAllContacts(
+        supabase,
+        activeAccountId,
+        whatsappNumberId
+      );
     } else if (audience.type === 'tags' && audience.tagIds?.length) {
       const ids = await fetchContactIdsForTags(supabase, audience.tagIds);
       contacts = await fetchContactsByIds(supabase, activeAccountId, ids);
@@ -248,9 +267,19 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         supabase,
         activeAccountId,
         userId,
-        audience.csvContacts
+        audience.csvContacts,
+        whatsappNumberId
       );
     }
+
+    // Only the sending number's contacts can receive the broadcast
+    // (migration 060); unscoped legacy contacts stay eligible.
+    contacts = contacts.filter(
+      (contact) =>
+        !whatsappNumberId ||
+        !contact.whatsapp_number_id ||
+        contact.whatsapp_number_id === whatsappNumberId
+    );
 
     if (audience.excludeTagIds?.length) {
       const excluded = new Set(
@@ -287,7 +316,8 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         supabase,
         accountId,
         user.id,
-        payload.audience
+        payload.audience,
+        payload.whatsappNumberId || null
       );
       if (contacts.length === 0)
         throw new Error('No contacts found for this audience.');

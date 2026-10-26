@@ -9,7 +9,12 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe';
+import {
+  claimContactForNumber,
+  findExistingContact,
+  insertContactRow,
+  isUniqueViolation,
+} from '@/lib/contacts/dedupe';
 import { resolveImportTagIds } from '@/lib/contacts/resolve-import-tags';
 import { addContactTagAndDispatch } from '@/lib/contacts/tag-events';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
@@ -24,6 +29,8 @@ export interface ApiContact {
   email: string | null;
   company: string | null;
   avatar_url: string | null;
+  /** WhatsApp number the contact belongs to (migration 060). */
+  whatsapp_number_id?: string | null;
   tags: { id: string; name: string; color: string }[];
   created_at: string;
   updated_at: string;
@@ -51,6 +58,9 @@ export function serializeContact(row: Record<string, unknown>): ApiContact {
     email: (row.email as string | null) ?? null,
     company: (row.company as string | null) ?? null,
     avatar_url: (row.avatar_url as string | null) ?? null,
+    ...(row.whatsapp_number_id !== undefined
+      ? { whatsapp_number_id: (row.whatsapp_number_id as string | null) ?? null }
+      : {}),
     tags: joins
       .map((j) => j.tags)
       .filter((t): t is NonNullable<RawTagJoin['tags']> => t != null)
@@ -102,7 +112,9 @@ export async function findOrCreateContact(
   db: SupabaseClient,
   accountId: string,
   auditUserId: string,
-  input: ContactInput
+  input: ContactInput,
+  /** Contacts are separate per WhatsApp number (migration 060). */
+  whatsappNumberId?: string | null
 ): Promise<{ id: string; created: boolean }> {
   const sanitized = sanitizePhoneForMeta(input.phone);
   if (!isValidE164(sanitized)) {
@@ -112,27 +124,37 @@ export async function findOrCreateContact(
     );
   }
 
-  const existing = await findExistingContact(db, accountId, sanitized);
-  if (existing) return { id: existing.id, created: false };
+  const existing = await findExistingContact(
+    db,
+    accountId,
+    sanitized,
+    whatsappNumberId
+  );
+  if (existing) {
+    await claimContactForNumber(db, existing, whatsappNumberId);
+    return { id: existing.id, created: false };
+  }
 
-  const { data: created, error } = await db
-    .from('contacts')
-    .insert({
-      account_id: accountId,
-      user_id: auditUserId,
-      phone: sanitized,
-      name: input.name ?? sanitized,
-      email: input.email ?? null,
-      company: input.company ?? null,
-    })
-    .select('id')
-    .single();
+  const { data: created, error } = await insertContactRow(db, {
+    account_id: accountId,
+    user_id: auditUserId,
+    phone: sanitized,
+    name: input.name ?? sanitized,
+    email: input.email ?? null,
+    company: input.company ?? null,
+    ...(whatsappNumberId ? { whatsapp_number_id: whatsappNumberId } : {}),
+  });
 
   if (error || !created) {
     // Lost a race against a concurrent create — the unique index
     // rejected the duplicate. Re-resolve to the winner.
     if (isUniqueViolation(error)) {
-      const raced = await findExistingContact(db, accountId, sanitized);
+      const raced = await findExistingContact(
+        db,
+        accountId,
+        sanitized,
+        whatsappNumberId
+      );
       if (raced) return { id: raced.id, created: false };
     }
     console.error('[api/v1/contacts] create error:', error);
@@ -155,11 +177,20 @@ export async function setContactTags(
   contactId: string,
   tagNames: string[]
 ): Promise<void> {
+  // Tags come from the contact's own WhatsApp number (migration 060).
+  const { data: contactRow } = await db
+    .from('contacts')
+    .select('*')
+    .eq('id', contactId)
+    .eq('account_id', accountId)
+    .maybeSingle();
   const { tagIdByKey } = await resolveImportTagIds(db, {
     accountId,
     userId: auditUserId,
     tagNames,
     canCreateTags: true,
+    whatsappNumberId:
+      (contactRow?.whatsapp_number_id as string | null | undefined) ?? null,
   });
   const desired = new Set(tagIdByKey.values());
 

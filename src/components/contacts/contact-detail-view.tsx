@@ -42,6 +42,7 @@ import {
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { renderTemplateBody } from '@/lib/whatsapp/template-render';
+import { matchesNumber } from '@/components/whatsapp/number-scope-select';
 
 interface ContactDetailViewProps {
   open: boolean;
@@ -78,7 +79,7 @@ export function ContactDetailView({
   const [savingDetails, setSavingDetails] = useState(false);
 
   // Tags tab
-  const [allTags, setAllTags] = useState<Tag[]>([]);
+  const [allTagsRaw, setAllTags] = useState<Tag[]>([]);
   const [contactTagIds, setContactTagIds] = useState<string[]>([]);
   const [savingTags, setSavingTags] = useState(false);
 
@@ -89,7 +90,16 @@ export function ContactDetailView({
   const [loadingNotes, setLoadingNotes] = useState(false);
 
   // Custom fields tab
-  const [customFields, setCustomFields] = useState<CustomField[]>([]);
+  const [customFieldsRaw, setCustomFields] = useState<CustomField[]>([]);
+  // Tags and custom fields come from the contact's own WhatsApp number
+  // (migration 060); unscoped legacy rows apply everywhere.
+  const contactNumberId = contact?.whatsapp_number_id ?? null;
+  const allTags = allTagsRaw.filter((tag) =>
+    matchesNumber(tag.whatsapp_number_id, contactNumberId)
+  );
+  const customFields = customFieldsRaw.filter((field) =>
+    matchesNumber(field.whatsapp_number_id, contactNumberId)
+  );
   const [customValues, setCustomValues] = useState<Record<string, string>>({});
   const [savingCustom, setSavingCustom] = useState(false);
   const [loadingCustom, setLoadingCustom] = useState(false);

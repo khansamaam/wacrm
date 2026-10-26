@@ -5,6 +5,13 @@ import { toast } from 'sonner';
 import { Loader2, Plus, Tag as TagIcon, X } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
+import { useWhatsAppNumbers } from '@/hooks/use-whatsapp-numbers';
+import {
+  NumberScopeSelect,
+  defaultScopeNumberId,
+  matchesNumber,
+  writableNumbers,
+} from '@/components/whatsapp/number-scope-select';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -55,6 +62,14 @@ export function TagManager() {
   const [deleting, setDeleting] = useState(false);
   const [newTagName, setNewTagName] = useState('');
   const [selectedColor, setSelectedColor] = useState(PRESET_COLORS[3].value);
+  // Tags are separate per WhatsApp number (migration 060).
+  const { numbers, selectedNumberId } = useWhatsAppNumbers();
+  const [numberChoice, setNumberChoice] = useState<string | null>(null);
+  const createNumberId =
+    numberChoice ?? defaultScopeNumberId(numbers, selectedNumberId);
+  const visibleTags = tags.filter((tag) =>
+    matchesNumber(tag.whatsapp_number_id, selectedNumberId)
+  );
 
   useEffect(() => {
     if (authLoading) return;
@@ -69,10 +84,12 @@ export function TagManager() {
   async function fetchTags(userId: string) {
     try {
       setLoading(true);
+      // Account-wide via RLS (previously filtered to the current user's
+      // own tags, which hid teammates' tags).
+      void userId;
       const { data, error } = await supabase
         .from('tags')
         .select('*')
-        .eq('user_id', userId)
         .order('created_at', { ascending: true });
 
       if (error) throw error;
@@ -105,6 +122,7 @@ export function TagManager() {
         account_id: accountId,
         name: newTagName.trim(),
         color: selectedColor,
+        ...(createNumberId ? { whatsapp_number_id: createNumberId } : {}),
       });
 
       if (error) throw error;
@@ -168,9 +186,15 @@ export function TagManager() {
           </div>
         ) : (
           <>
-            {tags.length > 0 ? (
+            <NumberScopeSelect
+              numbers={writableNumbers(numbers)}
+              value={createNumberId}
+              onChange={setNumberChoice}
+              label="New tags are added to"
+            />
+            {visibleTags.length > 0 ? (
               <div className="flex flex-wrap gap-2">
-                {tags.map((tag) => (
+                {visibleTags.map((tag) => (
                   <span
                     key={tag.id}
                     className="group inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium transition-colors"
