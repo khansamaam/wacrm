@@ -80,6 +80,8 @@ interface WhatsAppMessage {
   }
   /** Present when the customer swipe-replies to one of our messages. */
   context?: { id: string }
+  /** "Delete for everyone": names the message the customer deleted. */
+  revoke?: { original_message_id?: string; message_id?: string; id?: string }
 }
 
 interface WhatsAppWebhookEntry {
@@ -793,6 +795,44 @@ async function lookupInternalIdByMetaId(
  * Best-effort: a missing parent (we never received it) is logged and
  * skipped so the webhook still acks 200 to Meta.
  */
+/**
+ * Mark the message a customer deleted "for everyone". Meta names the
+ * original in `revoke.original_message_id`; other spellings are accepted
+ * defensively. The raw payload is logged because the shape is lightly
+ * documented, so an unmatched revoke can be diagnosed from the logs.
+ */
+async function handleRevoke(
+  message: WhatsAppMessage,
+  conversationId: string,
+  whatsappNumberId: string,
+): Promise<void> {
+  const originalId =
+    message.revoke?.original_message_id ??
+    message.revoke?.message_id ??
+    message.revoke?.id ??
+    message.context?.id ??
+    null
+  if (!originalId) {
+    console.warn('[webhook] revoke without an original message id:', JSON.stringify(message))
+    return
+  }
+  const deletedAt = new Date(parseInt(message.timestamp) * 1000).toISOString()
+  const { data, error } = await supabaseAdmin()
+    .from('messages')
+    .update({ deleted_by_customer_at: deletedAt })
+    .eq('conversation_id', conversationId)
+    .eq('whatsapp_number_id', whatsappNumberId)
+    .eq('message_id', originalId)
+    .select('id')
+  if (error) {
+    console.error('[webhook] failed to mark message as deleted by customer:', error.message)
+    return
+  }
+  if (!data || data.length === 0) {
+    console.warn('[webhook] revoke for an unknown message:', JSON.stringify(message))
+  }
+}
+
 async function handleReaction(
   message: WhatsAppMessage,
   conversationId: string,
@@ -900,6 +940,14 @@ async function processMessage(
   // Done before parseMessageContent so the media-URL fetch is skipped.
   if (message.type === 'reaction') {
     await handleReaction(message, conversation.id, contactRecord.id)
+    return
+  }
+
+  // "Delete for everyone" — not a new message. Tag the original as deleted
+  // (it stays visible to staff, migration 063) and stop: no bubble, no
+  // unread bump, no flows / automations / AI.
+  if (message.type === 'revoke') {
+    await handleRevoke(message, conversation.id, whatsappNumberId)
     return
   }
 
@@ -1253,6 +1301,11 @@ async function parseMessageContent(
     }
 
     default:
+      // Log the raw shape so new Meta message types can be supported.
+      console.warn(
+        `[webhook] unsupported message type "${message.type}":`,
+        JSON.stringify(message),
+      )
       return {
         ...empty,
         contentText: `[Unsupported message type: ${message.type}]`,

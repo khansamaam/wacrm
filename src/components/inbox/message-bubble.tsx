@@ -17,6 +17,7 @@ import {
   Phone,
   ExternalLink,
   Copy,
+  Trash2,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ReplyQuote } from "./reply-quote";
@@ -480,6 +481,17 @@ export function MessageBubble({
               (always outbound, so it sits on the primary fill). Lets
               agents tell an AI reply from their own / a Flow's at a
               glance. */}
+          {/* The customer deleted this message for everyone in WhatsApp
+              (migration 063). Kept visible to staff for the record. */}
+          {message.deleted_by_customer_at && (
+            <span
+              className="inline-flex items-center gap-0.5 rounded-full bg-red-500/15 px-1.5 py-px text-[9px] font-semibold uppercase leading-none tracking-wide text-red-400"
+              title={t("deletedBadgeTitle")}
+            >
+              <Trash2 className="h-2.5 w-2.5" />
+              {t("deletedBadge")}
+            </span>
+          )}
           {message.ai_generated && (
             <span
               className="inline-flex items-center gap-0.5 rounded-full bg-white/20 px-1.5 py-px text-[9px] font-semibold uppercase leading-none tracking-wide text-white"

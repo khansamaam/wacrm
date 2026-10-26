@@ -263,6 +263,8 @@ export interface TemplateMessageSnapshot {
 export interface Message {
   id: string;
   conversation_id: string;
+  /** Set when the customer deleted the message for everyone (063). */
+  deleted_by_customer_at?: string | null;
   whatsapp_number_id?: string | null;
   message_origin?:
     'cloud_api' | 'business_app' | 'history_sync' | 'external_api';

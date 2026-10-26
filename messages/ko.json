@@ -229,7 +229,9 @@
       "interactiveReply": "[인터랙티브 응답]",
       "unsupported": "[지원되지 않는 메시지 형식]",
       "aiBadge": "AI",
-      "aiBadgeTitle": "AI 어시스턴트가 자동으로 전송함"
+      "aiBadgeTitle": "AI 어시스턴트가 자동으로 전송함",
+      "deletedBadge": "삭제됨",
+      "deletedBadgeTitle": "고객이 WhatsApp에서 모두에게서 이 메시지를 삭제했습니다"
     },
     "actions": {
       "reply": "답장",
