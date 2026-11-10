@@ -149,6 +149,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfileLoading(true);
     lastFetchedUserIdRef.current = userId;
     try {
+      // The caller can only read their own account (RLS), so request it
+      // together with the profile instead of after it: one round trip
+      // less before the dashboard appears. The lookup by id further down
+      // stays as the fallback.
+      const accountPrefetch = supabase
+        .from('accounts')
+        .select('id, name, default_currency, module_access')
+        .limit(2);
       const { data, error } = await supabase
         .from('profiles')
         .select(
@@ -185,13 +193,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // migration 039 the module_access column is missing, so retry
           // without it and fall back to the historic "all modules"
           // behaviour instead of blanking the authenticated shell.
-          let accountResult = await supabase
-            .from('accounts')
-            // default_currency added in migration 021; narrowed to the
-            // USD fallback below for older schemas where it reads null.
-            .select('id, name, default_currency, module_access')
-            .eq('id', data.account_id)
-            .maybeSingle();
+          const prefetched = await accountPrefetch;
+          const prefetchedRow = prefetched.error
+            ? undefined
+            : prefetched.data?.find((row) => row.id === data.account_id);
+          let accountResult = prefetchedRow
+            ? { data: prefetchedRow, error: null }
+            : await supabase
+                .from('accounts')
+                // default_currency added in migration 021; narrowed to the
+                // USD fallback below for older schemas where it reads null.
+                .select('id, name, default_currency, module_access')
+                .eq('id', data.account_id)
+                .maybeSingle();
           if (accountResult.error) {
             // Expected before migration 039. Non-fatal, and must not use
             // console.error — Next's development overlay turns that

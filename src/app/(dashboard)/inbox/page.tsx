@@ -40,7 +40,7 @@ function InboxPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { accountId } = useAuth();
-  const { numbers, selectedNumberId, setSelectedNumberId } = useWhatsAppNumbers();
+  const { numbers, selectedNumberId, setSelectedNumberId, loading: numbersLoading } = useWhatsAppNumbers();
   /**
    * `?c=<id>` deep-link support. Used when landing here from the
    * dashboard's recent-conversations list so the right thread opens
@@ -53,9 +53,11 @@ function InboxPageInner() {
     useState<Conversation | null>(null);
   const [activeContact, setActiveContact] = useState<Contact | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [whatsappConnected, setWhatsappConnected] = useState<boolean | null>(
-    null
-  );
+  // Derived from the shared number list (already loaded for the switcher),
+  // so the "not connected" banner costs no extra requests.
+  const whatsappConnected: boolean | null = numbersLoading
+    ? null
+    : numbers.some((number) => number.status === "connected");
   /**
    * Bumped whenever we want children (ConversationList, MessageThread)
    * to refetch from the DB — used as a safety net against missed
@@ -178,45 +180,6 @@ function InboxPageInner() {
     }
   }, [selectedNumberId]);
 
-  // Check WhatsApp connection status on mount
-  useEffect(() => {
-    const checkConnection = async () => {
-      const supabase = createClient();
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const user = session?.user;
-
-      if (!user) return;
-
-      // whatsapp_config is one-row-per-account post-multi-user, so
-      // the previous `.eq('user_id', user.id)` would miss the row
-      // for any teammate who didn't personally save the config —
-      // the "WhatsApp not connected" banner would show in the
-      // shared inbox even though the admin had it configured.
-      // Resolve account_id via the profile and query by that.
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("account_id")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      const accountId = profile?.account_id as string | undefined;
-      if (!accountId) {
-        setWhatsappConnected(false);
-        return;
-      }
-
-      const { count } = await supabase
-        .from("whatsapp_numbers")
-        .select("id", { count: 'exact', head: true })
-        .eq("account_id", accountId)
-        .eq("status", "connected");
-
-      setWhatsappConnected((count ?? 0) > 0);
-    };
-
-    checkConnection();
-  }, []);
 
   // Handle realtime message events
   const handleMessageEvent = useCallback(

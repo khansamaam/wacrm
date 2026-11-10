@@ -117,11 +117,19 @@ export async function getCurrentAccount(): Promise<AccountContext> {
   }
   const user = { id: userId };
 
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("account_id, account_role")
-    .eq("user_id", user.id)
-    .maybeSingle();
+  // A user can only see their own account (RLS), so the account row is
+  // fetched alongside the profile rather than after it: one round trip
+  // instead of two on every API request. The point lookup by id below is
+  // kept as a fallback if the guess doesn't line up.
+  const [profileResult, visibleAccounts] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("account_id, account_role")
+      .eq("user_id", user.id)
+      .maybeSingle(),
+    supabase.from("accounts").select("id, name").limit(2),
+  ]);
+  const { data, error } = profileResult;
 
   if (error) {
     console.error("[getCurrentAccount] profile fetch error:", error);
@@ -140,21 +148,24 @@ export async function getCurrentAccount(): Promise<AccountContext> {
     throw new ForbiddenError(`Unknown account role: ${data.account_role}`);
   }
 
-  // Load the account with a plain point lookup by id rather than an
-  // embedded FK join (`account:accounts!inner(...)`). The embed forces
-  // PostgREST to resolve the profiles.account_id → accounts.id
-  // relationship from its schema cache; when that cache is stale — a
-  // common Supabase state right after a migration adds the FK, or when
-  // migrations are applied out of band — the embed fails hard with
-  // PGRST200 ("could not find a relationship … in the schema cache")
-  // and takes down the entire account context (issue #294). A lookup by
-  // id needs no relationship inference and is gated by the same accounts
-  // RLS, so it stays robust against cache staleness and older schemas.
-  const { data: account, error: accountErr } = await supabase
-    .from("accounts")
-    .select("id, name")
-    .eq("id", data.account_id)
-    .maybeSingle();
+  // Load the account with a plain lookup by id rather than an embedded FK
+  // join (`account:accounts!inner(...)`). The embed forces PostgREST to
+  // resolve the profiles.account_id → accounts.id relationship from its
+  // schema cache; when that cache is stale — a common Supabase state right
+  // after a migration adds the FK, or when migrations are applied out of
+  // band — the embed fails hard with PGRST200 and takes down the entire
+  // account context (issue #294). A lookup by id needs no relationship
+  // inference and is gated by the same accounts RLS.
+  const prefetched = (
+    (visibleAccounts.data ?? []) as Array<{ id: string; name: string }>
+  ).find((row) => row.id === data.account_id);
+  const { data: account, error: accountErr } = prefetched
+    ? { data: prefetched, error: null }
+    : await supabase
+        .from("accounts")
+        .select("id, name")
+        .eq("id", data.account_id)
+        .maybeSingle();
 
   if (accountErr) {
     console.error("[getCurrentAccount] account fetch error:", accountErr);

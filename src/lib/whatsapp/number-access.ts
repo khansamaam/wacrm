@@ -93,22 +93,25 @@ export async function loadMyNumberAccessLevels(args: {
     return result
   }
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('whatsapp_number_access_mode')
-    .eq('user_id', userId)
-    .eq('account_id', accountId)
-    .maybeSingle()
+  // Mode and assignments don't depend on each other: fetch both at once.
+  const [{ data: profile }, withLevel] = await Promise.all([
+    supabase
+      .from('profiles')
+      .select('whatsapp_number_access_mode')
+      .eq('user_id', userId)
+      .eq('account_id', accountId)
+      .maybeSingle(),
+    supabase
+      .from('whatsapp_number_members')
+      .select('whatsapp_number_id, access_level')
+      .eq('user_id', userId),
+  ])
   if ((profile?.whatsapp_number_access_mode ?? 'all') === 'all') {
     for (const id of numberIds) result.set(id, cap('full'))
     return result
   }
 
   let rows: Array<{ whatsapp_number_id: string; access_level?: string }> = []
-  const withLevel = await supabase
-    .from('whatsapp_number_members')
-    .select('whatsapp_number_id, access_level')
-    .eq('user_id', userId)
   if (withLevel.error && isMissingAccessLevelSupport(withLevel.error)) {
     // Before migration 059 every assignment is full access.
     const legacy = await supabase

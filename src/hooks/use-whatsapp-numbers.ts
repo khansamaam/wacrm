@@ -16,6 +16,7 @@ const TAB_STORAGE_KEY = 'wacrm:selected-whatsapp-number:tab'
 const CHANGE_EVENT = 'wacrm:selected-whatsapp-number-change'
 
 function readStoredSelection(): string | null {
+  if (typeof window === 'undefined') return null
   try {
     const tab = window.sessionStorage.getItem(TAB_STORAGE_KEY)
     // '' marks an explicit "All numbers" choice in this tab.
@@ -29,14 +30,18 @@ function readStoredSelection(): string | null {
 
 /** Accessible number list plus a per-tab, browser-persisted filter. */
 export function useWhatsAppNumbers() {
-  const [numbers, setNumbers] = useState<WhatsAppNumber[]>([])
-  const [selectedNumberId, setSelectedState] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+  // Read the cached list and this tab's choice during the first render, so
+  // the inbox's first conversations query already uses the right number
+  // instead of firing unfiltered and then again once the list arrives.
+  // The dashboard only renders on the client after login, so storage is
+  // available here.
+  const [numbers, setNumbers] = useState<WhatsAppNumber[]>(
+    () => peekWhatsAppNumbers() ?? [],
+  )
+  const [selectedNumberId, setSelectedState] = useState<string | null>(readStoredSelection)
+  const [loading, setLoading] = useState(() => numbers.length === 0)
 
   useEffect(() => {
-    const stored = readStoredSelection()
-    if (stored) Promise.resolve().then(() => setSelectedState(stored))
-
     const onChange = (event: Event) => {
       const detail = (event as CustomEvent<string | null>).detail
       setSelectedState(detail ?? null)
@@ -49,16 +54,8 @@ export function useWhatsAppNumbers() {
 
   useEffect(() => {
     let cancelled = false
-    // Show the last known list straight away (badges, number dropdown),
-    // then replace it with the fresh one below.
-    const known = peekWhatsAppNumbers()
-    if (known) {
-      Promise.resolve().then(() => {
-        if (cancelled) return
-        setNumbers(known)
-        setLoading(false)
-      })
-    }
+    // The cached list (if any) is already showing; replace it with the
+    // fresh one.
     void loadWhatsAppNumbers()
       .then((list) => {
         if (!cancelled) setNumbers(list)
@@ -68,9 +65,12 @@ export function useWhatsAppNumbers() {
     return () => { cancelled = true }
   }, [])
 
-  const validSelectedNumberId = selectedNumberId && numbers.some((number) => number.id === selectedNumberId)
-    ? selectedNumberId
-    : null
+  // Until the list first arrives, trust the stored choice rather than
+  // dropping to "All numbers" and switching back a moment later.
+  const validSelectedNumberId =
+    selectedNumberId && (numbers.length === 0 ? loading : numbers.some((number) => number.id === selectedNumberId))
+      ? selectedNumberId
+      : null
 
   const setSelectedNumberId = useCallback((id: string | null) => {
     setSelectedState(id)

@@ -16,12 +16,14 @@ interface BuilderCall {
   table: string;
   columns?: string;
   eqArgs: [string, unknown][];
+  limited?: boolean;
 }
 
 function makeClient(opts: {
   user: { id: string } | null;
   userErr?: unknown;
   byTable: Record<string, { data: unknown; error: unknown }>;
+  listByTable?: Record<string, { data: unknown; error: unknown }>;
 }) {
   const calls: BuilderCall[] = [];
 
@@ -41,6 +43,19 @@ function makeClient(opts: {
         return Promise.resolve(
           opts.byTable[table] ?? { data: null, error: null },
         );
+      },
+      // List read (the account prefetch): the same canned row, as a list.
+      limit() {
+        call.limited = true;
+        const result =
+          opts.listByTable?.[table] ??
+          opts.byTable[table] ?? { data: null, error: null };
+        const data = result.data
+          ? Array.isArray(result.data)
+            ? result.data
+            : [result.data]
+          : [];
+        return Promise.resolve({ data, error: result.error });
       },
     };
     return builder;
@@ -97,13 +112,37 @@ describe("getCurrentAccount", () => {
       account: { id: "acct-1", name: "Acme" },
     });
 
-    // Two queries: profiles by user_id, then accounts by id. Neither
-    // selects an embedded relationship — the regression guard.
+    // Two plain queries sent together: profiles by user_id and the
+    // caller's visible account. Neither selects an embedded relationship
+    // — the regression guard.
     expect(calls.map((c) => c.table)).toEqual(["profiles", "accounts"]);
     expect(calls[0].columns).not.toMatch(/accounts!/);
     expect(calls[0].eqArgs).toEqual([["user_id", "user-1"]]);
     expect(calls[1].columns).not.toMatch(/accounts!/);
-    expect(calls[1].eqArgs).toEqual([["id", "acct-1"]]);
+    expect(calls[1].limited).toBe(true);
+  });
+
+  it("falls back to a lookup by id when the prefetched account doesn't match", async () => {
+    const { client, calls } = makeClient({
+      user: { id: "user-1" },
+      byTable: {
+        profiles: {
+          data: { account_id: "acct-1", account_role: "admin" },
+          error: null,
+        },
+        accounts: { data: { id: "acct-1", name: "Acme" }, error: null },
+      },
+      listByTable: {
+        accounts: { data: [{ id: "other", name: "Other" }], error: null },
+      },
+    });
+    createClient.mockReturnValue(client);
+
+    const ctx = await getCurrentAccount();
+
+    expect(ctx.account).toEqual({ id: "acct-1", name: "Acme" });
+    expect(calls.map((c) => c.table)).toEqual(["profiles", "accounts", "accounts"]);
+    expect(calls[2].eqArgs).toEqual([["id", "acct-1"]]);
   });
 
   it("throws UnauthorizedError when there is no session", async () => {
