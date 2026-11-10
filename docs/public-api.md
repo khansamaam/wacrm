@@ -214,6 +214,22 @@ URLs. A failed report may include:
 }
 ```
 
+Optional sender: when the workspace has more than one WhatsApp number,
+you can say which number sent the message with **`phone_number_id`** (the
+Meta phone number ID you sent from), `whatsapp_number_id` (the CRM number
+UUID), or `from` (the sender's E.164 number). None of them is required,
+and a missing, malformed or unknown value never fails the request. Without
+a usable hint the CRM picks the sender itself:
+
+1. the only number whose WhatsApp Business Account owns the template;
+2. otherwise the number the customer most recently chatted with;
+3. otherwise the workspace default number.
+
+When Meta's status webhook later reports the real sending number, a
+message filed under a different number is moved to the right chat
+automatically. Re-sending the same `whatsapp_message_id` updates the
+existing bubble wherever it is.
+
 `recipient_phone` and `meta_message_id` are accepted as aliases for
 `to` and `whatsapp_message_id`. `timestamp` may be ISO-8601, Unix
 seconds, or Unix milliseconds.

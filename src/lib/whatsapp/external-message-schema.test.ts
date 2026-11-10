@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   ExternalMessageValidationError,
@@ -83,5 +83,53 @@ describe('parseExternalMessageSyncPayload', () => {
     expect(() => parseExternalMessageSyncPayload(payload)).toThrow(
       new ExternalMessageValidationError(expectedMessage)
     );
+  });
+});
+
+describe('parseExternalMessageSyncPayload sender', () => {
+  const base = {
+    to: '+971556636519',
+    whatsapp_message_id: 'wamid.sender',
+    type: 'text',
+    text: 'Hi',
+    timestamp: '2026-11-08T10:00:00Z',
+    status: 'sent',
+  };
+
+  it('defaults to no sender hint', () => {
+    expect(parseExternalMessageSyncPayload(base).sender).toEqual({
+      whatsappNumberId: null,
+      phoneNumberId: null,
+      phone: null,
+    });
+  });
+
+  it('reads the Meta phone number ID and the from number', () => {
+    const result = parseExternalMessageSyncPayload({
+      ...base,
+      phone_number_id: '206353349218600',
+      from: '+971 800 4526687',
+    });
+    expect(result.sender).toEqual({
+      whatsappNumberId: null,
+      phoneNumberId: '206353349218600',
+      phone: '9718004526687',
+    });
+  });
+
+  it.each([
+    { phone_number_id: 'abc' },
+    { whatsapp_number_id: 'not-a-uuid' },
+    { from: '12' },
+  ])('ignores a malformed sender instead of failing %#', (extra) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = parseExternalMessageSyncPayload({ ...base, ...extra });
+    expect(result.sender).toEqual({
+      whatsappNumberId: null,
+      phoneNumberId: null,
+      phone: null,
+    });
+    expect(result.whatsappMessageId).toBe('wamid.sender');
+    warn.mockRestore();
   });
 });

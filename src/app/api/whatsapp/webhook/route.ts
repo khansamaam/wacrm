@@ -27,6 +27,11 @@ import {
 } from '@/lib/whatsapp/template-webhook'
 import { processPendingCoexistenceEvents } from '@/lib/whatsapp/coexistence-sync'
 import { parseInboundReply } from '@/lib/whatsapp/inbound-reply'
+import { relocateSyncedMessage } from '@/lib/whatsapp/synced-message-relocation'
+import {
+  describeUnsupportedMessage,
+  normalizeWebhookMessageStatus,
+} from '@/lib/whatsapp/unsupported-message'
 import {
   collectWebhookTargets,
   markWebhookReceived,
@@ -94,7 +99,7 @@ interface WhatsAppWebhookEntry {
         phone_number_id: string
       }
       contacts?: Array<{
-        profile: { name: string }
+        profile?: { name?: string }
         wa_id: string
       }>
       messages?: WhatsAppMessage[]
@@ -528,6 +533,9 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
           continue
         }
         for (const status of value.statuses) {
+          // A message mirrored via /api/v1/messages/sync may sit under a
+          // guessed number; Meta's status names the real sender.
+          await relocateSyncedMessage(supabaseAdmin(), status.id, config)
           await handleStatusUpdate(status, config.id)
         }
       }
@@ -617,6 +625,7 @@ async function handleStatusUpdate(status: {
   recipient_id: string
   errors?: MetaDeliveryError[]
 }, whatsappNumberId: string) {
+  status = { ...status, status: normalizeWebhookMessageStatus(status.status) }
   const deliveryError =
     status.status === 'failed'
       ? parseMetaDeliveryError(status.errors)
@@ -886,7 +895,8 @@ async function handleReaction(
 
 async function processMessage(
   message: WhatsAppMessage,
-  contact: { profile: { name: string }; wa_id: string },
+  // Meta can omit the contact entry or its profile (e.g. no public name).
+  contact: { profile?: { name?: string }; wa_id?: string } | undefined,
   // Tenancy. Resolved from the matched whatsapp_config row; every
   // contact / conversation / message row created downstream is
   // stamped with this so any member of the account can see it.
@@ -900,7 +910,7 @@ async function processMessage(
   messageOrigin: 'cloud_api' | 'business_app' | 'history_sync',
 ) {
   const senderPhone = normalizePhone(message.from)
-  const contactName = contact.profile.name
+  const contactName = contact?.profile?.name ?? ''
 
   // Find or create contact
   const contactOutcome = await findOrCreateContact(
@@ -1308,7 +1318,7 @@ async function parseMessageContent(
       )
       return {
         ...empty,
-        contentText: `[Unsupported message type: ${message.type}]`,
+        contentText: describeUnsupportedMessage(message),
       }
   }
 }

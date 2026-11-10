@@ -48,6 +48,15 @@ export interface ExternalMessageSyncInput {
   status: MessageStatus;
   deliveryErrorCode: string | null;
   deliveryErrorMessage: string | null;
+  /**
+   * Which business number sent the message. Any one of these identifies it;
+   * all null means the workspace default number.
+   */
+  sender: {
+    whatsappNumberId: string | null;
+    phoneNumberId: string | null;
+    phone: string | null;
+  };
 }
 
 export class ExternalMessageValidationError extends Error {
@@ -372,5 +381,39 @@ export function parseExternalMessageSyncPayload(
     status,
     deliveryErrorCode,
     deliveryErrorMessage,
+    sender: parseSender(body),
   };
+}
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The sender hint is optional and never fails the request: older callers
+ * don't send it, and a malformed value is ignored (with a log line) so the
+ * message is still recorded and the sender is detected automatically.
+ */
+function parseSender(
+  body: Record<string, unknown>
+): ExternalMessageSyncInput['sender'] {
+  let whatsappNumberId: string | null = trimmed(body.whatsapp_number_id) || null;
+  if (whatsappNumberId && !UUID_RE.test(whatsappNumberId)) {
+    console.warn('[external-message-sync] ignoring malformed whatsapp_number_id');
+    whatsappNumberId = null;
+  }
+
+  let phoneNumberId: string | null =
+    trimmed(body.phone_number_id) || trimmed(body.from_phone_number_id) || null;
+  if (phoneNumberId && !/^\d{1,32}$/.test(phoneNumberId)) {
+    console.warn('[external-message-sync] ignoring malformed phone_number_id');
+    phoneNumberId = null;
+  }
+
+  let phone: string | null = sanitizePhoneForMeta(trimmed(body.from)) || null;
+  if (phone && !isValidE164(phone)) {
+    console.warn('[external-message-sync] ignoring malformed from number');
+    phone = null;
+  }
+
+  return { whatsappNumberId, phoneNumberId, phone };
 }

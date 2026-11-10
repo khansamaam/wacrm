@@ -4,6 +4,7 @@ import type { MessageStatus } from '@/types';
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver';
 import type { ExternalMessageSyncInput } from '@/lib/whatsapp/external-message-schema';
 import { resolveConversationByPhone } from '@/lib/whatsapp/resolve-conversation';
+import { sanitizePhoneForMeta } from '@/lib/whatsapp/phone-utils';
 import { SendMessageError } from '@/lib/whatsapp/send-message';
 
 const SUCCESS_STATUS_ORDER: readonly MessageStatus[] = [
@@ -88,6 +89,86 @@ function buildMessageValues(
   };
 }
 
+interface SenderNumberRow {
+  id: string;
+  phone_number_id: string | null;
+  display_phone_number: string | null;
+  waba_id: string | null;
+}
+
+/**
+ * Pick the business number a synced message was sent from. Never throws:
+ * a lookup problem only means the workspace default is used, as before.
+ *
+ * 1. The caller's hint (phone_number_id, whatsapp_number_id or from).
+ * 2. The only number whose WABA owns the template.
+ * 3. The number this customer most recently chatted with.
+ * 4. null, i.e. the workspace default.
+ *
+ * A wrong guess is corrected when Meta's status webhook reports the real
+ * sender (see relocateSyncedMessage).
+ */
+export async function resolveSyncSender(
+  db: SupabaseClient,
+  accountId: string,
+  input: Pick<ExternalMessageSyncInput, 'sender' | 'templateName' | 'phone'>
+): Promise<string | null> {
+  try {
+    const { data, error } = await db
+      .from('whatsapp_numbers')
+      .select('id, phone_number_id, display_phone_number, waba_id')
+      .eq('account_id', accountId);
+    if (error) throw error;
+    const rows = (data ?? []) as SenderNumberRow[];
+    if (rows.length === 0) return null;
+
+    const { sender } = input;
+    if (sender.whatsappNumberId || sender.phoneNumberId || sender.phone) {
+      const match = rows.find((row) => {
+        if (sender.whatsappNumberId) return row.id === sender.whatsappNumberId;
+        if (sender.phoneNumberId) return row.phone_number_id === sender.phoneNumberId;
+        return sanitizePhoneForMeta(row.display_phone_number ?? '') === sender.phone;
+      });
+      if (match) return match.id;
+      console.warn(
+        '[external-message-sync] sender hint matches no number in this workspace; detecting automatically'
+      );
+    }
+    if (rows.length === 1) return rows[0].id;
+
+    if (input.templateName) {
+      const { data: templates } = await db
+        .from('message_templates')
+        .select('waba_id')
+        .eq('account_id', accountId)
+        .eq('name', input.templateName);
+      const wabaIds = new Set(
+        ((templates ?? []) as Array<{ waba_id: string | null }>)
+          .map((t) => t.waba_id)
+          .filter(Boolean)
+      );
+      const owners = rows.filter((row) => row.waba_id && wabaIds.has(row.waba_id));
+      if (owners.length === 1) return owners[0].id;
+    }
+
+    const suffix = input.phone.slice(-8);
+    const { data: recent } = await db
+      .from('conversations')
+      .select('whatsapp_number_id, contacts!inner(phone_normalized)')
+      .eq('account_id', accountId)
+      .not('whatsapp_number_id', 'is', null)
+      .like('contacts.phone_normalized', `%${suffix}`)
+      .order('last_message_at', { ascending: false, nullsFirst: false })
+      .limit(1);
+    const recentId = (recent?.[0] as { whatsapp_number_id?: string } | undefined)
+      ?.whatsapp_number_id;
+    if (recentId && rows.some((row) => row.id === recentId)) return recentId;
+  } catch (error) {
+    console.error('[external-message-sync] sender detection failed:', error);
+  }
+  return null;
+}
+
 /**
  * Mirror a message that another system already sent through Meta.
  *
@@ -99,19 +180,17 @@ export async function syncExternalMessage(
   accountId: string,
   input: ExternalMessageSyncInput
 ): Promise<ExternalMessageSyncResult> {
-  const resolved = await resolveConversationByPhone(
-    db,
-    accountId,
-    input.phone,
-    input.contactName,
-    { requireWhatsAppConfig: false }
-  );
-
-  const { data: existing, error: findError } = await db
+  // A retry (e.g. a later status report) must update the bubble wherever it
+  // now lives, even if the status webhook has since moved it to the real
+  // sender's chat, so look it up across the workspace first.
+  const { data: synced, error: findError } = await db
     .from('messages')
-    .select('id, status, delivery_error_code, delivery_error_message')
-    .eq('conversation_id', resolved.conversationId)
+    .select(
+      'id, status, delivery_error_code, delivery_error_message, conversation_id, conversations!inner(account_id, contact_id)'
+    )
     .eq('message_id', input.whatsappMessageId)
+    .eq('sender_type', 'agent')
+    .eq('conversations.account_id', accountId)
     .order('created_at', { ascending: true })
     .limit(1)
     .maybeSingle();
@@ -124,6 +203,26 @@ export async function syncExternalMessage(
       500
     );
   }
+
+  let resolved: Awaited<ReturnType<typeof resolveConversationByPhone>>;
+  if (synced) {
+    const conversation = synced.conversations as unknown as { contact_id: string };
+    resolved = {
+      conversationId: synced.conversation_id as string,
+      contactId: conversation.contact_id,
+      contactCreated: false,
+    };
+  } else {
+    const whatsappNumberId = await resolveSyncSender(db, accountId, input);
+    resolved = await resolveConversationByPhone(
+      db,
+      accountId,
+      input.phone,
+      input.contactName,
+      { requireWhatsAppConfig: false, whatsappNumberId }
+    );
+  }
+  const existing = synced;
 
   const previous = existing as ExistingMessage | null;
   const effectiveStatus = previous
@@ -157,6 +256,9 @@ export async function syncExternalMessage(
       .insert({
         conversation_id: resolved.conversationId,
         ...buildMessageValues(input, effectiveStatus),
+        // Marks the row as mirrored, so the status webhook may move it to
+        // the number Meta reports as the real sender.
+        message_origin: 'external_api',
         created_at: input.timestamp,
       })
       .select('id')
